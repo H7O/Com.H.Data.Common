@@ -9,7 +9,7 @@
     <ApplicationIcon>128x128.ico</ApplicationIcon>
     <Version>7.0.0.0</Version>
     <Authors>Hussein Al Bayati</Authors>
-    <Description>Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that returns dynamic data results IEnumerable&lt;dynamic&gt; and IAsyncEnumerableIEnumerable&lt;dynamic&gt;.</Description>
+    <Description>Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that return dynamic data results `IEnumerable&lt;dynamic&gt;` or `IAsyncEnumerable&lt;dynamic&gt;`.</Description>
     <Copyright>Hussein Al Bayati</Copyright>
     <PackageProjectUrl>https://github.com/H7O/Com.H.Data.Common</PackageProjectUrl>
     <PackageIcon>128x128.jpg</PackageIcon>

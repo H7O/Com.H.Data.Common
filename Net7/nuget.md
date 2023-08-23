@@ -1,5 +1,5 @@
 # Com.H.Data.Common
-Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that returns dynamic data results `IEnumerable<dynamic>` and `IAsyncEnumerable<dynamic>`.
+Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that return dynamic data result `IEnumerable<dynamic>` or `IAsyncEnumerable<dynamic>`.
 For source code and documentation, kindly visit the project's github page [https://github.com/H7O/Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common)
 
 
