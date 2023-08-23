@@ -22,8 +22,17 @@
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="128x128.ico" />
+  </ItemGroup>
+
 
   <ItemGroup>
+    <None Include="..\128x128.jpg">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    
     <None Include=".\nuget.md">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
