@@ -2,7 +2,7 @@
 Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that returns dynamic data results `IEnumerable<dynamic>` and `IAsyncEnumerable<dynamic>`.
 
 ## Installation
-Best way to install this library is via NuGet package manager. Search for [Com.H.Data.Common](https://www.nuget.org/packages/Com.H.Data.Common) and install it.
+Best way to install this library is via NuGet package manager [Com.H.Data.Common](https://www.nuget.org/packages/Com.H.Data.Common).
 
 ## Sample 1
 This sample demonstrates how to execute a simple query without parameters on a SQL Server Database.
@@ -22,10 +22,10 @@ string conStr = @"connection string goes here";
 DbConnection dc = new SqlConnection(conStr);
 // ^ note the use of DbConnection instead of SqlConnection. The extension methods are defined on DbConnection
 
-var result = dc.ExecuteQuery("select 'abc' as name, '123' as phone");
+var result = dc.ExecuteQuery("select 'John' as name, '123' as phone");
 // ^ returns IEnumerable<dynamic>, you can also return IEnumerable<T> where T is your data model class
 // by using the ExecuteQuery<T> method which returns IEnumerable<T>
-// example: var result = dc.ExecuteQuery<YourDataModelClass>("select 'abc' as name, '123' as phone");
+// example: var result = dc.ExecuteQuery<YourDataModelClass>("select 'John' as name, '123' as phone");
 // Also, returns IAsyncEnumerable when called asynchronously via dc.ExecuteQueryAsync() or dc.ExecuteQueryAsync<T>()
 
 foreach (var item in result)
@@ -63,12 +63,11 @@ var result = dc.ExecuteQuery(@"
 // It also protects you from SQL injection attacks and is configurable to use other delimiters by passing 
 // a regular expression 
  
-
 // Example 1: using `[[` and `]]` instead of `{{` and `}}` dc.ExecuteQuery(@"
 //	select * from (values ('John', '55555'), ('Jane', '44444')) as t (name, phone)
 //	where name = [[name]]", queryParams, @"\[\[(?<param>.*?)?\]\]" );
 
-// Example 2: using `|` for enclosing parameters instead of `{{` and `}}` dc.ExecuteQuery(@"
+// Example 2: using `|` instead of `{{` and `}}` dc.ExecuteQuery(@"
 //	select * from (values ('John', '55555'), ('Jane', '44444')) as t (name, phone)
 //	where name = |name|", queryParams, @"\|(?<param>.*?)\|" );
 
