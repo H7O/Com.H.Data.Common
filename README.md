@@ -53,9 +53,10 @@ var queryParams = new { name = "Jane" };
 // ^ queryParams could be an anonymous object (similar to the example above)
 // or the following types:
 // 1) IDictionary<string, object>
-// 2) JSON string
-// 3) System.Text.Json.JsonElement (useful when building Web APIs, allows passing 
-// 4) JsonElement input directly from a web client to the extension method)
+// 2) Normal object with properties that match the parameter names in the query
+// 3) JSON string
+// 4) System.Text.Json.JsonElement (useful when building Web APIs, allows passing 
+//    JsonElement input directly from a web client)
 // Example 1: var queryParams = new Dictionary<string, object> { { "name", "Jane" } }
 // Example 2: var queryParams = new MyCustomParamClass { name = "John" }
 // Example 3: var queryParams = "{\"name\":\"Jane\"}"
