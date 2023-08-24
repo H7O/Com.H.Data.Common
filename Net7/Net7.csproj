@@ -17,7 +17,7 @@
     <RepositoryUrl>https://github.com/H7O/Com.H.Data.Common</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>ADO.Net, dynamic query results</PackageTags>
-    <PackageReleaseNotes>Initial release</PackageReleaseNotes>
+    <PackageReleaseNotes>Bug fixes and adding JsonElement and JSON string support for query parameters</PackageReleaseNotes>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 
