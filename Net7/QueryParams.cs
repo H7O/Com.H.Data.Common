@@ -1,4 +1,10 @@
-﻿namespace Com.H.Data.Common
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Com.H.Data.Common
 {
     public class QueryParams
     {
@@ -7,7 +13,7 @@
         /// Or it could be an IDictionary<string, object>
         /// </summary>
         public object? DataModel { get; set; }
-        public string QueryParamsRegex { get; set; } = @"\{\{(?<param>.*?)?\}\}";
+        public string QueryParamsRegex { get; set; } = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})";
 
     }
 }

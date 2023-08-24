@@ -276,8 +276,8 @@ namespace Com.H.Data.Common
         #region async
 
         #region main implementation
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", 
-            "CA1068:CancellationToken parameters must come last", 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
+            "CA1068:CancellationToken parameters must come last",
             Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
         private static async IAsyncEnumerable<dynamic> ExecuteQueryAsyncMain(
         this DbCommand dbc,
@@ -320,15 +320,20 @@ namespace Com.H.Data.Common
                         // the reverse order of parameters declared in the DataModel that would go well with the
                         // Last In First Out (LIFO) order of the queryParamList.
                         var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
-                        var matchingQueryVarNamesWithoutMarkers =
+                        var matchingQueryVars =
                             Regex.Matches(query, queryParam.QueryParamsRegex)
                             .Cast<Match>()
-                            .Select(x => x.Groups["param"].Value)
-                            .Where(x => !string.IsNullOrEmpty(x))
-                            .Select(x => x).Distinct().ToList();
+                            .Select(x => new
+                            {
+                                Name = x.Groups["param"].Value,
+                                OpenMarker = x.Groups["open_marker"].Value,
+                                CloseMarker = x.Groups["close_marker"].Value
+                            })
+                            .Where(x => !string.IsNullOrEmpty(x.Name))
+                            .Distinct().ToList();
 
 
-                        foreach (var queryVarNameWithoutMarkers in matchingQueryVarNamesWithoutMarkers)
+                        foreach (var matchingQueryVar in matchingQueryVars)
                         {
                             // see if the query parameter name matches a data model field name
                             // if so, then add the query parameter name to the list of placeholders
@@ -339,16 +344,20 @@ namespace Com.H.Data.Common
 
                             // method 2: using TryGetValue
                             object? matchingDataModelPropertyValue = null;
-                            dataModelProperties?.TryGetValue(queryVarNameWithoutMarkers, out matchingDataModelPropertyValue);
+                            dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
 
 
                             // if the query parameter name matches a data model field name
                             // then add the query parameter name to the list of placeholders
                             // and also add the value of the data model field to the list of placeholders
-                            var sqlParamName = $"@vxv_{count}_" + queryVarNameWithoutMarkers;
-                            query = Regex
-                                .Replace(query, queryParam.QueryParamsRegex,
-                                sqlParamName);
+                            var sqlParamName = $"@vxv_{count}_" + matchingQueryVar.Name;
+                            query = query.Replace(
+                                        matchingQueryVar.OpenMarker
+                                        + matchingQueryVar.Name
+                                        + matchingQueryVar.CloseMarker
+                                        , sqlParamName,
+                                        StringComparison.OrdinalIgnoreCase
+                                        );
                             var p = command.CreateParameter();
                             p.ParameterName = sqlParamName;
                             p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
@@ -416,15 +425,15 @@ namespace Com.H.Data.Common
         #endregion
 
         #region DbCommand
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", 
-            "CA1068:CancellationToken parameters must come last", 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
+            "CA1068:CancellationToken parameters must come last",
             Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
 
         public static async IAsyncEnumerable<dynamic> ExecuteQueryAsync(
             this DbCommand dbc,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
             bool closeConnectionOnExit = false
             )
@@ -457,7 +466,7 @@ namespace Com.H.Data.Common
             this DbCommand dbc,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
             bool closeConnectionOnExit = false
             )
@@ -486,7 +495,7 @@ namespace Com.H.Data.Common
             this DbConnection con,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
             bool closeConnectionOnExit = false
             )
@@ -514,7 +523,7 @@ namespace Com.H.Data.Common
             this DbConnection con,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
             bool closeConnectionOnExit = false
             )
@@ -546,7 +555,7 @@ namespace Com.H.Data.Common
             this string connectionString,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
             bool closeConnectionOnExit = false
             )
@@ -573,7 +582,7 @@ namespace Com.H.Data.Common
             this string connectionString,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
             bool closeConnectionOnExit = false
             )
@@ -610,7 +619,7 @@ namespace Com.H.Data.Common
             this DbCommand dbc,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             bool closeConnectionOnExit = false)
         {
             return dbc.ExecuteQueryAsync(
@@ -626,7 +635,7 @@ namespace Com.H.Data.Common
             this DbCommand dbc,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             bool closeConnectionOnExit = false)
         {
             return dbc.ExecuteQueryAsync<T>(
@@ -645,7 +654,7 @@ namespace Com.H.Data.Common
             this DbConnection con,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             bool closeConnectionOnExit = false)
         {
             return con.ExecuteQueryAsync(
@@ -661,7 +670,7 @@ namespace Com.H.Data.Common
             this DbConnection con,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             bool closeConnectionOnExit = false)
         {
             return con.ExecuteQueryAsync<T>(
@@ -679,7 +688,7 @@ namespace Com.H.Data.Common
             this string connectionString,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             bool closeConnectionOnExit = false)
         {
             return connectionString.ExecuteQueryAsync(
@@ -695,7 +704,7 @@ namespace Com.H.Data.Common
             this string connectionString,
             string query,
             object? queryParams = null,
-            string queryParamsRegex = @"\{\{(?<param>.*?)?\}\}",
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             bool closeConnectionOnExit = false)
         {
             return connectionString.ExecuteQueryAsync<T>(
