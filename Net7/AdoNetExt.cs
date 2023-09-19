@@ -384,7 +384,7 @@ namespace Com.H.Data.Common
                     ex.GenerateError(
                         command,
                         query,
-                        command?.Parameters?.ToDictionary()));
+                        command?.Parameters?.ToDictionary()), ex);
             }
 
             if (reader?.HasRows == true)
