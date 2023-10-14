@@ -9,6 +9,8 @@ namespace Com.H.Data.Common
 {
     public static class AdoNetExt
     {
+        private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
+        private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
         private readonly static DataMapper _mapper = new();
 
@@ -122,144 +124,6 @@ namespace Com.H.Data.Common
         }
 
 
-        #region removed
-        //        private static async IAsyncEnumerable<T?> ExecuteQueryIDictionaryAsync<T>(
-        //            this DbCommand dbc,
-        //            string query,
-        //            IDictionary<string, object>? queryParams = null,
-        //            [EnumeratorCancellation] CancellationToken cToken = default,
-        //            string openMarker = "{{",
-        //            string closeMarker = "}}",
-        //            bool closeConnectionOnExit = false,
-        //            string queryParamsRegex = "(?<param>.*?)?"
-        //            )
-        //        {
-
-        //            if (dbc == null) throw new ArgumentNullException(nameof(dbc));
-        //            if (string.IsNullOrEmpty(query)) throw new ArgumentNullException(nameof(query));
-        //            var conn = dbc.Connection;
-        //            if (conn == null) throw new ArgumentNullException(nameof(conn));
-        //            bool cont = true;
-        //            DbDataReader? reader = null;
-        //            DbCommand? command = null;
-        //            try
-        //            {
-        //                await conn.EnsureOpenAsync(cToken);
-        //                cToken.ThrowIfCancellationRequested();
-        //                // extract placeholder parameter names (without the markers) from the SQL query
-        //                var queryPlaceholders = Regex.Matches(query, openMarker + queryParamsRegex + closeMarker)
-        //                    .Cast<Match>()
-        //                    .Select(x => x.Groups["param"].Value)
-        //                    .Where(x => !string.IsNullOrEmpty(x))
-        //                    .Select(x => x).Distinct().ToList();
-
-        //                command = conn.CreateCommand();
-        //                command.CommandType = CommandType.Text;
-
-
-        //                if (queryPlaceholders.Count > 0)
-        //                {
-        //                    // Join the placeholders that are found in the SQL Query with their corresponding
-        //                    // values that are passed in queryParams
-        //                    // by doing a left join on SQL Query placeholders = keys of queryParams
-        //                    var joined = queryPlaceholders
-        //                        .LeftJoin(queryParams ?? new Dictionary<string, object>(),
-        //                        pl => pl.ToUpper(CultureInfo.InvariantCulture),
-        //                        p => p.Key.ToUpper(CultureInfo.InvariantCulture),
-        //                        // returns placeholders and their values, and if a placeholder doesn't have
-        //                        // a corresponding value, return DbNull for that placeholder
-        //                        (pl, p) => new { k = pl, v = p.Value??DBNull.Value }).ToList();
-
-        //                    foreach (var item in joined)
-        //                    {
-        //                        // Replace the placeholders in the SQL Query with
-        //                        // prepared declared SQL variables using the format
-        //                        // @vxv_<variable name>.
-        //                        // e.g. if the placeholder in the SQL Query was `{{date}}`
-        //                        // the replacement prepared statement declared variable would be
-        //                        // @vxv_date
-        //                        query = query
-        //                        .Replace(openMarker + item.k + closeMarker,
-        //                            "@vxv_" + item.k, true,
-        //                            CultureInfo.InvariantCulture);
-        //                        var p = command.CreateParameter();
-        //                        p.ParameterName = "@vxv_" + item.k;
-        //                        p.Value = item.v;
-        //                        command.Parameters.Add(p);
-        //                    }
-
-        //                }
-
-        //                command.CommandText = query;
-
-        //                reader = await command.ExecuteReaderAsync(cToken);
-        //                cToken.ThrowIfCancellationRequested();
-
-        //            }
-        //            catch (Exception ex)
-        //            {
-        //                if (reader is not null)
-        //                    await reader.EnsureClosedAsync();
-        //                if (closeConnectionOnExit)
-        //                {
-        //                    await conn.EnsureClosedAsync(cToken);
-        //                    cToken.ThrowIfCancellationRequested();
-        //                }
-        //                throw new Exception(ex.GenerateError(command, query, queryParams));
-        //            }
-
-        //            if (reader.HasRows)
-        //            {
-        //                while (cont)
-        //                {
-        //                    try
-        //                    {
-        //                        cont = await reader.ReadAsync(cToken);
-        //                        cToken.ThrowIfCancellationRequested();
-        //                        if (!cont) break;
-        //                    }
-        //                    catch
-        //                    {
-        //                        await reader.EnsureClosedAsync();
-        //                        if (closeConnectionOnExit) await conn.EnsureClosedAsync(cToken);
-        //                        throw;
-        //                    }
-        //                    T? result = (typeof(T) == typeof(string)) ? (T?)(object?)(string?)null : Activator.CreateInstance<T>();
-        //                    var joined =
-        //                    typeof(T).GetCachedProperties()
-        //                        .LeftJoin(
-        //                            Enumerable.Range(0, reader.FieldCount)
-        //                            .Select(x => new { Name = reader.GetName(x), Value = reader.GetValue(x) }),
-        //                            dst => dst.Name.ToUpper(CultureInfo.InvariantCulture),
-        //                            // see if schema name was applied
-        //                            src => src.Name.ToUpper(CultureInfo.InvariantCulture),
-        //                            (dst, src) => new { dst, src })
-        //                            ;
-
-        //                    foreach (var item in joined.Where(x => x?.src?.Value is not null))
-        //                    {
-        //                        try
-        //                        {
-        //                            // item.src.Value cannot be null here
-        //#pragma warning disable CS8602 // Dereference of a possibly null reference.
-        //                            item.dst.Info.SetValue(result,
-        //                                Convert.ChangeType(item.src.Value,
-        //                                item.dst.Info.PropertyType, CultureInfo.InvariantCulture));
-        //#pragma warning restore CS8602 // Dereference of a possibly null reference.
-        //                        }
-        //                        catch { }
-        //                    }
-
-        //                    yield return result;
-        //                }
-        //            }
-        //            await reader.EnsureClosedAsync();
-
-        //            if (closeConnectionOnExit) await conn.EnsureClosedAsync(cToken);
-        //            yield break;
-        //        }
-        #endregion
-
 
         public static IDictionary<string, object?>? ToDictionary(this DbParameterCollection? dbParameterCollection)
         {
@@ -313,7 +177,7 @@ namespace Com.H.Data.Common
                     int count = 0;
                     // note: reverse the order of the queryParamList
                     // so that the last object in the list has the highest priority (i.e., Last In First Out)
-                    foreach (var queryParam in queryParamList.Reverse())
+                    foreach (var queryParam in queryParamList.ReduceToUnique(true))
                     {
                         count++;
                         // Note: pass true to GetDataModelParameters to get the parameters in
@@ -350,7 +214,26 @@ namespace Com.H.Data.Common
                             // if the query parameter name matches a data model field name
                             // then add the query parameter name to the list of placeholders
                             // and also add the value of the data model field to the list of placeholders
-                            var sqlParamName = $"@vxv_{count}_" + matchingQueryVar.Name;
+                            // so that the query parameter name is replaced with a prepared statement variable
+                            // and the value of the data model field is passed as a parameter to the prepared statement variable
+
+                            // Note: the prepared statement variable name is prefixed with @vxv_<count>_
+                            // where <count> is the number of the QueryParams object in the queryParamList
+                            // e.g. if the queryParamList has 3 objects, then the prepared statement variable name
+                            // for the first object in the queryParamList will be @vxv_1_<query parameter name>
+                            // and the prepared statement variable name for the second object in the queryParamList
+                            // will be @vxv_2_<query parameter name>, and so on.
+                            // This is done to ensure that the prepared statement variable names are unique
+                            // across all the objects in the queryParamList.
+
+                            // special characters in the query parameter name are replaced with underscores
+                            // e.g. if the query parameter name is "my param", then the prepared statement variable name
+
+                            // todo: replace the following with a regex
+                            // regex version
+                            var sqlParamName = $"@vxv_{count}_" +
+                                _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
+
                             query = query.Replace(
                                         matchingQueryVar.OpenMarker
                                         + matchingQueryVar.Name

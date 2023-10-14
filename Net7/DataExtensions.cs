@@ -98,28 +98,51 @@ namespace Com.H.Data.Common
             }
             return result;
         }
-        //public static string ReplaceQueryParameterMarkers(
-        //    this string query,
-        //    string srcOpenMarker,
-        //    string srcCloseMarker,
-        //    string dstOpenMarker,
-        //    string dstCloseMarker)
-        //{
-        //    if (string.IsNullOrEmpty(query)) return query;
-        //    var regexPattern = srcOpenMarker + QueryParams.RegexPattern + srcCloseMarker;
-        //    var paramList = Regex.Matches(query, regexPattern)
-        //        .Cast<Match>()
-        //        .Select(x => x.Groups["param"].Value)
-        //        .Where(x => !string.IsNullOrEmpty(x))
-        //        .Select(x => x).Distinct().ToList();
 
-        //    foreach (var item in paramList)
-        //    {
-        //        query = query.Replace(srcOpenMarker + item + srcCloseMarker,
-        //            dstOpenMarker + item + dstCloseMarker);
-        //    }
 
-        //    return query;
-        //}
+        /// <summary>
+        /// Reduce the list to have QueryParams with unique QueryParamsRegex
+        /// and merge the DataModel of the QueryParams with the same QueryParamsRegex
+        /// reduce the list to have QueryParams with unique QueryParamsRegex
+        /// into one DataModel. The DataModel of the QueryParams with the same QueryParamsRegex
+        /// will be merged into the first QueryParams in the list.
+        /// If a DataModel has the same key as the DataModel of the first QueryParams in the list,
+        /// the value of the DataModel of the first QueryParams in the list will be replaced
+        /// by the value of the last DataModel.
+        /// </summary>
+        /// <param name="queryParamsList"></param>
+        /// <param name="reverse"></param>
+        /// <returns></returns>
+        public static List<QueryParams> ReduceToUnique(
+            this IEnumerable<QueryParams> queryParamsList,
+            bool reverse = false)
+        {
+            if (queryParamsList == null) return new List<QueryParams>();
+            var result = new List<QueryParams>();
+            queryParamsList.Reverse();
+            foreach (var group in queryParamsList.GroupBy(x => x.QueryParamsRegex))
+            {
+                var mergedDataModels = new Dictionary<string, object>();
+
+                foreach (var queryParams in group)
+                {
+                    if (queryParams is null) continue;
+                    foreach (var dataModelItem in queryParams.DataModel?.GetDataModelParameters(reverse)
+                        ?? new Dictionary<string, object>())
+                    {
+                        if (dataModelItem.Key is null) continue;
+                        mergedDataModels.TryAdd(dataModelItem.Key, dataModelItem.Value);
+                    }
+                }
+                result.Add(new QueryParams
+                {
+                    QueryParamsRegex = group.Key,
+                    DataModel = mergedDataModels
+                });
+
+            }
+            return result;
+
+        }
     }
 }
