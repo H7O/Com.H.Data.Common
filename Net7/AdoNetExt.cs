@@ -292,7 +292,13 @@ namespace Com.H.Data.Common
                     foreach (var item in Enumerable.Range(0, reader.FieldCount)
                             .Select(x => new { Name = reader.GetName(x), Value = reader.GetValue(x) }))
                     {
-                        result.TryAdd(item.Name, item.Value);
+                        // ensure null of the correct type is returned
+                        if (item.Value is DBNull)
+                        {
+                            result.TryAdd(item.Name, null);
+                        }
+                        else 
+                            result.TryAdd(item.Name, item.Value);
                     }
 
                     yield return result;
