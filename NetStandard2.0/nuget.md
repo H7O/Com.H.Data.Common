@@ -1,4 +1,4 @@
-# Com.H.Data.Common (.net standard 2.0 version)
+# Com.H.Data.Common (.net standard 2.0 support)
 Adds ExecuteQuery extension methods to DbConntion and DbCommand that return dynamic data result `IEnumerable<dynamic>` or `IAsyncEnumerable<dynamic>`.
 For source code and documentation, kindly visit the project's github page [https://github.com/H7O/Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common)
 
