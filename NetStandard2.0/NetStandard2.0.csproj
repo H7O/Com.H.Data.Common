@@ -31,6 +31,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\128x128.jpg" Link="128x128.jpg">
+      <PackagePath>\</PackagePath>
+      <Pack>True</Pack>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="System.Text.Json" Version="8.0.0" />
   </ItemGroup>
