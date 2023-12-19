@@ -1,11 +1,13 @@
 # Com.H.Data.Common (.net standard 2.0 support)
-Adds ExecuteQuery extension methods to DbConntion and DbCommand that return dynamic data result `IEnumerable<dynamic>` or `IAsyncEnumerable<dynamic>`.
+Adds ExecuteQuery extension methods to DbConntion and DbCommand that return dynamic data result `IEnumerable<dynamic>`.
 For source code and documentation, kindly visit the project's github page [https://github.com/H7O/Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common)
+> This is the .net standard 2.0 version of the library. 
+> If you are using higher .net versions, please use the corresponding latest version number of this library that matches the start version number of the .net you are using.
+> For example, if you are using .net 8, use version 8.x.x.x of this library.
 
 
 ## Sample 1
 This sample demonstrates how to execute a simple query without parameters on a SQL Server Database.
-
 To run this sample, you need to:
 1) Create a new console application
 2) Add NuGet package [Com.H.Data.Common](https://www.nuget.org/packages/Com.H.Data.Common)  

@@ -14,20 +14,26 @@
     <Authors>Hussein Al Bayati</Authors>
     <PackageProjectUrl>https://github.com/H7O/Com.H.Data.Common</PackageProjectUrl>
     <PackageIcon>128x128.jpg</PackageIcon>
-    <Description>Adds ExecuteQuery extension method to DbConntion and DbCommand that return dynamic data results `IEnumerable&lt;dynamic&gt;` or `IAsyncEnumerable&lt;dynamic&gt;`. (.net standard 2.0 version)</Description>
+    <Description>Adds ExecuteQuery extension method to DbConntion and DbCommand that return dynamic data results `IEnumerable&lt;dynamic&gt;`. (.net standard 2.0 version)</Description>
     <RepositoryUrl>https://github.com/H7O/Com.H.Data.Common</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>ADO.Net, dynamic query results</PackageTags>
     <PackageReleaseNotes>Initial release</PackageReleaseNotes>
+    <PackageReadmeFile>nuget.md</PackageReadmeFile>
 
   </PropertyGroup>
 
   <ItemGroup>
     <None Remove="128x128.ico" />
+    <None Remove="nuget.md" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="128x128.ico" />
+    <Content Include="nuget.md">
+      <PackagePath>\</PackagePath>
+      <Pack>True</Pack>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -40,13 +46,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="System.Text.Json" Version="8.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="nuget.md">
-      <PackagePath>\</PackagePath>
-      <Pack>True</Pack>
-    </None>
   </ItemGroup>
 
 </Project>
