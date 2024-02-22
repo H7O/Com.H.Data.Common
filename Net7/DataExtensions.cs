@@ -28,6 +28,15 @@ namespace Com.H.Data.Common
                     }
                     continue;
                 }
+                if (typeof(IEnumerable<KeyValuePair<string, object>>).IsAssignableFrom(item.GetType()))
+                {
+                    foreach (var x in ((IEnumerable<KeyValuePair<string, object>>)item))
+                    {
+                        if (result.ContainsKey(x.Key) && !descending) continue;
+                        result[x.Key] = x.Value;
+                    }
+                    continue;
+                }
                 if (typeof(JsonElement).IsAssignableFrom(item.GetType()))
                 {
                     JsonElement json = (JsonElement)item;

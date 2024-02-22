@@ -6,8 +6,8 @@
     <AssemblyName>Com.H.Data.Common</AssemblyName>
     <RootNamespace>Com.H.Data.Common</RootNamespace>
     <ApplicationIcon>128x128.ico</ApplicationIcon>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <Version>2.0.0.0</Version>
+    <AssemblyVersion>2.0.0.1</AssemblyVersion>
+    <Version>2.0.0.1</Version>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <Copyright>Hussein Al Bayati</Copyright>
