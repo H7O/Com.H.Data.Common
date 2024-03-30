@@ -112,7 +112,7 @@ Any ADO.NET provider that implements DbConnection and DbCommand classes should w
 > ```csharp
 > Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = "@";
 > ```
-> Note that there is no need to set the parameter prefix for SQL Server (or any other database that uses `@` as the parameter prefix) as it is the default value for the library.
+> Note that there is no need to set the parameter prefix for SQL Server (or any other database that uses `@` as the parameter prefix) as it is already the default set value.
 >
 
 ## What other features this library has?
