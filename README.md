@@ -98,23 +98,23 @@ foreach (var item in result)
 Any ADO.NET provider that implements DbConnection and DbCommand classes should work with this library.
 
 > **Note**: Be mindful of setting the correct parameter prefix for your database provider. 
-
+>
 > For example, for SQL Server, the parameter prefix is `@` and for Oracle, it is `:`. 
-
+>
 > By default, the library uses `@` as the parameter prefix. 
 > To change that, you can change the default symbol by setting the static `DefaultParameterPrefix` property of the `Com.H.Data.Common.AdoNetExt` class.
-
+>
 > Oracle example:
 > ```csharp
-Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = ":"; // for Oracle
-```
-
-SQL Server example (or any other database that uses `@` as the parameter prefix like PostgreSQL, MySQL, etc):
-```csharp
-Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = "@";
-```
+> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = > ":"; // for Oracle
+> ```
+>
+> SQL Server example (or any other database that uses `@` as the parameter prefix like PostgreSQL, MySQL, etc):
+> ```csharp
+> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = "@";
+> ```
 > Note that there is no need to set the parameter prefix for SQL Server (or any other database that uses `@` as the parameter prefix) as it is the default value for the library.
-
+>
 
 ## What other features this library has?
 This small library has several other options that allow for more advanced features that might not be of much use to most, hence samples for those features have been left out in this quick `how to` documentation.
