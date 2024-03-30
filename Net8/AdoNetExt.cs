@@ -9,6 +9,9 @@ namespace Com.H.Data.Common
 {
     public static class AdoNetExt
     {
+        public static string DefaultParameterPrefix { get; set; } = "@";
+        public static string DefaultParameterTemplate { get;set; } = "{{DefaultParameterPrefix}}vxv_{{ParameterCount}}_{{ParameterName}}";
+
         private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
         private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
@@ -229,10 +232,13 @@ namespace Com.H.Data.Common
                             // special characters in the query parameter name are replaced with underscores
                             // e.g. if the query parameter name is "my param", then the prepared statement variable name
 
-                            // todo: replace the following with a regex
-                            // regex version
-                            var sqlParamName = $"@vxv_{count}_" +
-                                _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
+                            // method 1: using configurable template
+                            var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", DefaultParameterPrefix)
+                                .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
+                                .Replace("{{ParameterName}}", _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_"));
+                            // method 2: using fixed template
+                            //    var sqlParamName = $"@vxv_{count}_" +
+                            //    _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
 
                             query = query.Replace(
                                         matchingQueryVar.OpenMarker
