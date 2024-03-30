@@ -105,7 +105,7 @@ Any ADO.NET provider that implements DbConnection and DbCommand classes should w
 >
 > Oracle example:
 > ```csharp
-> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = > ":"; // for Oracle
+> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = ":"; // for Oracle
 > ```
 >
 > SQL Server example (or any other database that uses `@` as the parameter prefix like PostgreSQL, MySQL, etc):
