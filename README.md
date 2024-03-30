@@ -99,13 +99,13 @@ Any ADO.NET provider that implements DbConnection and DbCommand classes should w
 
 > **Note**: Be mindful of setting the correct parameter prefix for your database provider. 
 
-For example, for SQL Server, the parameter prefix is `@` and for Oracle, it is `:`. 
+> For example, for SQL Server, the parameter prefix is `@` and for Oracle, it is `:`. 
 
-By default, the library uses `@` as the parameter prefix. 
-To change that, you can change the default symbol by setting the static `DefaultParameterPrefix` property of the `Com.H.Data.Common.AdoNetExt` class.
+> By default, the library uses `@` as the parameter prefix. 
+> To change that, you can change the default symbol by setting the static `DefaultParameterPrefix` property of the `Com.H.Data.Common.AdoNetExt` class.
 
-Oracle example:
-```csharp
+> Oracle example:
+> ```csharp
 Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = ":"; // for Oracle
 ```
 
