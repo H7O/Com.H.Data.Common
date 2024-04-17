@@ -19,6 +19,7 @@ namespace Com.H.Data.Common
             foreach (var item in dataModel.EnsureEnumerable())
             {
                 if (((object?)item) == null) continue;
+                #region check for string object pair
                 if (typeof(IDictionary<string, object>).IsAssignableFrom(item.GetType()))
                 {
                     foreach (var x in ((IDictionary<string, object>)item))
@@ -37,6 +38,30 @@ namespace Com.H.Data.Common
                     }
                     continue;
                 }
+                #endregion
+
+                #region check for string string pair
+                if (typeof(IDictionary<string, string>).IsAssignableFrom(item.GetType()))
+                {
+                    foreach (var x in ((IDictionary<string, string>)item))
+                    {
+                        if (result.ContainsKey(x.Key) && !descending) continue;
+                        result[x.Key] = x.Value;
+                    }
+                    continue;
+                }
+                if (typeof(IEnumerable<KeyValuePair<string, string>>).IsAssignableFrom(item.GetType()))
+                {
+                    foreach (var x in ((IEnumerable<KeyValuePair<string, string>>)item))
+                    {
+                        if (result.ContainsKey(x.Key) && !descending) continue;
+                        result[x.Key] = x.Value;
+                    }
+                    continue;
+                }
+                #endregion
+
+                #region check for JsonElement
                 if (typeof(JsonElement).IsAssignableFrom(item.GetType()))
                 {
                     JsonElement json = (JsonElement)item;
@@ -65,6 +90,9 @@ namespace Com.H.Data.Common
                     }
                     continue;
                 }
+                #endregion
+
+                #region check for string
                 if (typeof(string) == item.GetType())
                 {
                     try
@@ -98,6 +126,7 @@ namespace Com.H.Data.Common
                     catch { }
                     continue;
                 }
+                #endregion
 
                 foreach (var x in ((object)item).GetType().GetProperties())
                 {
@@ -107,7 +136,6 @@ namespace Com.H.Data.Common
             }
             return result;
         }
-
 
         /// <summary>
         /// Reduce the list to have QueryParams with unique QueryParamsRegex
@@ -128,8 +156,8 @@ namespace Com.H.Data.Common
         {
             if (queryParamsList == null) return new List<QueryParams>();
             var result = new List<QueryParams>();
-            queryParamsList.Reverse();
-            foreach (var group in queryParamsList.GroupBy(x => x.QueryParamsRegex))
+            foreach (var group in (reverse?queryParamsList.Reverse():queryParamsList)
+                .GroupBy(x => x.QueryParamsRegex))
             {
                 var mergedDataModels = new Dictionary<string, object>();
 

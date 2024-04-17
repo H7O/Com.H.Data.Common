@@ -126,8 +126,6 @@ namespace Com.H.Data.Common
             await reader.CloseAsync();
         }
 
-
-
         public static IDictionary<string, object?>? ToDictionary(this DbParameterCollection? dbParameterCollection)
         {
             if (dbParameterCollection == null) return null;
