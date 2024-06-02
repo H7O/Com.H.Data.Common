@@ -159,13 +159,13 @@ namespace Com.H.Data.Common
 
 
             DbDataReader? reader = null;
-            DbCommand? command = null;
+            DbCommand command = dbc;
             try
             {
                 await conn.EnsureOpenAsync(cToken);
                 cToken.ThrowIfCancellationRequested();
-                command = conn.CreateCommand();
-                command.CommandType = CommandType.Text;
+                // command = conn.CreateCommand();
+                // command.CommandType = CommandType.Text;
 
                 // Extract placeholder parameter names (without the markers) from the SQL query.
                 // Each QueryParams object in queryParamList has it's own set of markers
@@ -361,6 +361,7 @@ namespace Com.H.Data.Common
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false
             )
         {
@@ -390,11 +391,14 @@ namespace Com.H.Data.Common
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false
             )
         {
             using (DbCommand dbc = con.CreateCommand())
             {
+                if (commandTimeout.HasValue)
+                    dbc.CommandTimeout = commandTimeout.Value;
                 await foreach (var item in ExecuteQueryAsync(
                     dbc,
                     query,
@@ -418,6 +422,7 @@ namespace Com.H.Data.Common
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false
             )
         {
@@ -427,6 +432,7 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 cToken,
+                commandTimeout,
                 closeConnectionOnExit))
             {
                 var converted = _mapper.Map<T>(item);
@@ -450,6 +456,7 @@ namespace Com.H.Data.Common
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false
             )
         {
@@ -461,6 +468,7 @@ namespace Com.H.Data.Common
                     queryParams,
                     queryParamsRegex,
                     cToken,
+                    commandTimeout,
                     closeConnectionOnExit))
                     yield return item;
             }
@@ -477,6 +485,7 @@ namespace Com.H.Data.Common
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false
             )
         {
@@ -489,6 +498,7 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 cToken,
+                commandTimeout,
                 closeConnectionOnExit))
                 {
                     var converted = _mapper.Map<T>(item);
@@ -536,6 +546,7 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 CancellationToken.None,
+                dbc.CommandTimeout,
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
         }
@@ -548,6 +559,7 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false)
         {
             return con.ExecuteQueryAsync(
@@ -555,6 +567,7 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 CancellationToken.None,
+                commandTimeout,
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
         }
@@ -564,6 +577,7 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false)
         {
             return con.ExecuteQueryAsync<T>(
@@ -571,6 +585,7 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 CancellationToken.None,
+                commandTimeout,
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
         }
@@ -582,6 +597,7 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false)
         {
             return connectionString.ExecuteQueryAsync(
@@ -589,6 +605,7 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 CancellationToken.None,
+                commandTimeout,
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
         }
@@ -598,6 +615,7 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
             bool closeConnectionOnExit = false)
         {
             return connectionString.ExecuteQueryAsync<T>(
@@ -605,6 +623,7 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 CancellationToken.None,
+                commandTimeout,
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
         }
