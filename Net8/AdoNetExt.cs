@@ -4,6 +4,7 @@ using System.Dynamic;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
+using System.Collections.Generic;
 
 namespace Com.H.Data.Common
 {
@@ -14,6 +15,20 @@ namespace Com.H.Data.Common
 
         private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
         private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        public static string DefaultDataTypeRegex { get; set; } = @"(?<open_marker>\{type\{)(?<type>.*?)\{(?<param>.*?)?(?<close_marker>\}\}\})";
+
+        private static Regex defaultDataTypeRegexCompiled = null!;
+
+        private static Regex DefaultDataTypeRegexCompiled
+        {
+            get
+            {
+                if (defaultDataTypeRegexCompiled != null) return defaultDataTypeRegexCompiled;
+                return defaultDataTypeRegexCompiled = new Regex(DefaultDataTypeRegex, RegexOptions.Compiled);
+            }
+        }
+
 
         private readonly static DataMapper _mapper = new();
 
@@ -157,6 +172,61 @@ namespace Com.H.Data.Common
             var conn = dbc.Connection ?? throw new Exception("DbCommand.Connection is null");
             bool cont = true;
 
+            #region get data types from the query
+
+            // get the data types from the query
+
+
+            var dataTypeList = DefaultDataTypeRegexCompiled.Matches(query)
+                .Cast<Match>()
+                .Reverse()
+                .Select(x => new
+                {
+                    ParamName = x.Groups["param"].Value,
+                    Type = x.Groups["type"].Value,
+                    OpenMarker = x.Groups["open_marker"].Value,
+                    CloseMarker = x.Groups["close_marker"].Value
+                })
+                .Where(x => !string.IsNullOrEmpty(x.ParamName)
+                    && !string.IsNullOrEmpty(x.Type));
+            
+            bool hasDataTypes = dataTypeList.Any();
+
+            Dictionary<string, dynamic> dataTypeDict = null!;
+            if (hasDataTypes)
+            {
+                dataTypeDict = new();
+                foreach (var item in dataTypeList)
+                {
+                    dataTypeDict.TryAdd(item.ParamName, item);
+                }
+            }
+
+            
+            
+
+
+            // iterate through the data types found in the query
+            // and replace the data type placeholders with the `ParamName` value
+
+            foreach (var item in dataTypeList)
+            {
+                query = query.Replace(
+                    item.OpenMarker
+                    + item.Type + "{"
+                    + item.ParamName
+                    + item.CloseMarker
+                    , item.ParamName,
+                    StringComparison.OrdinalIgnoreCase
+                    );
+            }
+
+
+
+
+            #endregion
+
+
 
             DbDataReader? reader = null;
             DbCommand command = dbc;
@@ -245,6 +315,7 @@ namespace Com.H.Data.Common
                                         , sqlParamName,
                                         StringComparison.OrdinalIgnoreCase
                                         );
+
                             var p = command.CreateParameter();
                             p.ParameterName = sqlParamName;
                             p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
@@ -253,6 +324,7 @@ namespace Com.H.Data.Common
 
                     }
                 }
+
 
                 command.CommandText = query;
 
@@ -301,8 +373,35 @@ namespace Com.H.Data.Common
                         {
                             result.TryAdd(item.Name, null);
                         }
-                        else 
-                            result.TryAdd(item.Name, item.Value);
+                        else
+                        {
+                            if (hasDataTypes 
+                                && dataTypeDict.ContainsKey(item.Name)
+                                && !string.IsNullOrEmpty(item.Value as string)
+                                )
+                            {
+                                
+                                switch (dataTypeDict[item.Name].Type)
+                                {
+                                    case "json":
+                                        // custom deseriliazation
+                                        result.TryAdd(item.Name, (object)(item.Value as string)!.ParseJson());
+                                        // System.Text.Json deserialization
+                                        // result.TryAdd(item.Name, (object)JsonSerializer.Deserialize<dynamic>((item.Value as string)));
+                                        // result.TryAdd(item.Name, JsonDocument.Parse((item.Value as string)!).RootElement);
+                                        break;
+                                    case "xml":
+                                        // custom deseriliazation
+                                        result.TryAdd(item.Name, (object) (item.Value as string)!.ParseXml());
+                                        break;
+                                    default:
+                                        result.TryAdd(item.Name, item.Value);
+                                        break;
+                                }
+                            }
+                            else
+                                result.TryAdd(item.Name, item.Value);
+                        }
                     }
 
                     yield return result;

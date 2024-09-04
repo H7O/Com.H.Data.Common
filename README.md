@@ -94,6 +94,59 @@ foreach (var item in result)
 }
 ```
 
+## Sample 3
+This sample demonstrates how to return nested hierarchical data from a query.
+
+```csharp
+using Com.H.Data.Common;
+using System.Data.Common;
+using Microsoft.Data.SqlClient;
+
+string conStr = @"your connection string goes here";
+DbConnection dc = new SqlConnection(conStr);
+
+
+var result = dc.ExecuteQuery(@"
+SELECT 
+    'John' as [name],
+    (select * from (values 
+		('55555', 'Mobile'), 
+		('44444', 'Work')) 
+        as t (number, [type]) for json path) AS {type{json{phones}}}");
+
+Com.H.Data.Common.AdoNetExt.DebugTest();
+foreach (var person in result)
+{
+    Console.WriteLine($"name = {person.name}");
+    Console.WriteLine("--- phones ---");
+    foreach (var phone in person.phones)
+    {
+        System.Console.WriteLine($"{phone.type} = {phone.number}");
+    }
+    
+}
+```
+Microsoft SQL Server natively supports returning JSON data from a query using the `FOR JSON` clause.
+
+The normal example of returning JSON data from a query would look like this:
+```sql
+SELECT 
+    'John' as [name],
+    (select * from (values 
+		('55555', 'Mobile'), 
+		('44444', 'Work')) as t (number, [type]) for json path) AS phones
+```
+
+However, the above query returns a JSON string that you would have to parse in your application.
+
+This library automatically takes care of that parsing process for you and returns a dynamic object that you can access using the property names in the query.
+
+To tell the library to parse the nested JSON data, you just need to enclose the property name (that you expect to have json string) in the following syntax: `{type{json{your_property_name}}}`.
+
+In our example above, we are filling the property `phones` with JSON string. Hence we used the syntax `{type{json{phones}}}` to tell the library to parse the JSON string and fill the `phones` property with the parsed JSON data.
+
+**Note**: Another syntax for parsing XML string is `{type{xml{your_property_name}}}`.
+
 ## What other databases this library supports?
 Any ADO.NET provider that implements DbConnection and DbCommand classes should work with this library.
 
