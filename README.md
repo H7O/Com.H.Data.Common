@@ -114,7 +114,6 @@ SELECT
 		('44444', 'Work')) 
         as t (number, [type]) for json path) AS {type{json{phones}}}");
 
-Com.H.Data.Common.AdoNetExt.DebugTest();
 foreach (var person in result)
 {
     Console.WriteLine($"name = {person.name}");
