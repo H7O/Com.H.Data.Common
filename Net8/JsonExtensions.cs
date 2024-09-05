@@ -2,9 +2,7 @@
 using System.Collections.Generic;
 using System.Dynamic;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace Com.H.Data.Common
 {
@@ -16,36 +14,41 @@ namespace Com.H.Data.Common
         /// <param name="jsonText"></param>
         /// <returns></returns>
         public static dynamic ParseJson(this string jsonText)
-            => AsDynamic(JsonSerializer.Deserialize<dynamic>(jsonText));
+            => AsDynamic(JsonSerializer.Deserialize<JsonElement>(jsonText))!;
 
         /// <summary>
         /// Converts a JsonElement to dynamic object
         /// </summary>
         /// <param name="jsonElement"></param>
         /// <returns></returns>
-        public static dynamic? AsDynamic(this JsonElement jsonElement)
+        public static dynamic AsDynamic(this JsonElement jsonElement)
             =>
                 jsonElement.ValueKind switch
                 {
-                    JsonValueKind.Array => jsonElement.EnumerateArray().Select(x => x.AsDynamic()),
+                    JsonValueKind.Array => jsonElement.EnumerateArray().Select(x => x.AsDynamic()).ToList(),
                     JsonValueKind.Object => jsonElement.EnumerateObject()
-                        .Aggregate(new ExpandoObject(),
+                        .Aggregate(new ExpandoObject() as IDictionary<string, object?>,
                         (i, n) =>
                         {
-                            i.TryAdd(n.Name, (object?)
-                                (n.Value.ValueKind switch
-                                {
-                                    JsonValueKind.Array
-                                    or JsonValueKind.Object => AsDynamic(n.Value),
-                                    _ => n.Value.GetString()
-                                })
-                            );
+                            i[n.Name] = n.Value.ValueKind switch
+                            {
+                                JsonValueKind.Array
+                                or JsonValueKind.Object => AsDynamic(n.Value),
+                                JsonValueKind.String => n.Value.GetString(),
+                                JsonValueKind.Number => n.Value.GetDecimal(),
+                                JsonValueKind.True => true,
+                                JsonValueKind.False => false,
+                                JsonValueKind.Null => null,
+                                _ => null
+                            };
                             return i;
                         }),
-                    _ => (string?)null
+                    //JsonValueKind.String => jsonElement.GetString(),
+                    //JsonValueKind.Number => jsonElement.GetDecimal(),
+                    //JsonValueKind.True => true,
+                    //JsonValueKind.False => false,
+                    //JsonValueKind.Null => null,
+                    _ => null!
                 };
-
-
-
     }
 }
