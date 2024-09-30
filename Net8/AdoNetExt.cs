@@ -4,7 +4,7 @@ using System.Dynamic;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
-using System.Collections.Generic;
+
 
 namespace Com.H.Data.Common
 {
@@ -16,7 +16,20 @@ namespace Com.H.Data.Common
         private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
         private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
-        public static string DefaultDataTypeRegex { get; set; } = @"(?<open_marker>\{type\{)(?<type>.*?)\{(?<param>.*?)?(?<close_marker>\}\}\})";
+        private static string defaultDataTypeRegex = @"(?<open_marker>\{type\{)(?<type>.*?)\{(?<param>.*?)?(?<close_marker>\}\}\})";
+        public static string DefaultDataTypeRegex
+        {
+            get
+            {
+                return defaultDataTypeRegex;
+            }
+            set
+            {
+                defaultDataTypeRegex = value;
+                defaultDataTypeRegexCompiled = null!;
+            }
+        }
+                
 
         private static Regex defaultDataTypeRegexCompiled = null!;
 
