@@ -43,11 +43,11 @@ namespace Com.H.Data.Common
                             };
                             return i;
                         }),
-                    //JsonValueKind.String => jsonElement.GetString(),
-                    //JsonValueKind.Number => jsonElement.GetDecimal(),
-                    //JsonValueKind.True => true,
-                    //JsonValueKind.False => false,
-                    //JsonValueKind.Null => null,
+                    JsonValueKind.String => jsonElement.GetString()!,
+                    JsonValueKind.Number => jsonElement.GetDecimal(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Null => null!,
                     _ => null!
                 };
     }
