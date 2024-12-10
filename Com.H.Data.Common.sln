@@ -15,6 +15,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Net8", "Net8\Net8.csproj", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetStandard2.0", "NetStandard2.0\NetStandard2.0.csproj", "{A1D0AC2F-CBE7-40EA-ABC1-BE2F6C9B42A1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Net9", "Net9\Net9.csproj", "{0F2A50D2-1DCF-4986-AFE2-28D4D14C49DF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +35,10 @@ Global
 		{A1D0AC2F-CBE7-40EA-ABC1-BE2F6C9B42A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1D0AC2F-CBE7-40EA-ABC1-BE2F6C9B42A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1D0AC2F-CBE7-40EA-ABC1-BE2F6C9B42A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0F2A50D2-1DCF-4986-AFE2-28D4D14C49DF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0F2A50D2-1DCF-4986-AFE2-28D4D14C49DF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0F2A50D2-1DCF-4986-AFE2-28D4D14C49DF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0F2A50D2-1DCF-4986-AFE2-28D4D14C49DF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
