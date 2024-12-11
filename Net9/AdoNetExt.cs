@@ -247,8 +247,8 @@ namespace Com.H.Data.Common
             {
                 await conn.EnsureOpenAsync(cToken);
                 cToken.ThrowIfCancellationRequested();
-                // command = conn.CreateCommand();
-                // command.CommandType = CommandType.Text;
+                // query = conn.CreateCommand();
+                // query.CommandType = CommandType.Text;
 
                 // Extract placeholder parameter names (without the markers) from the SQL query.
                 // Each QueryParams object in queryParamList has it's own set of markers
@@ -427,6 +427,17 @@ namespace Com.H.Data.Common
             yield break;
         }
 
+        private static async Task ExecuteCommandAsyncMain(
+        this DbCommand dbc,
+        string query,
+        IEnumerable<QueryParams>? queryParamList = null,
+        CancellationToken cToken = default,
+        bool closeConnectionOnExit = false)
+        {
+            await foreach (var _ in ExecuteQueryAsyncMain(dbc, query, queryParamList, cToken, closeConnectionOnExit)) ;
+        }
+
+
         #endregion
 
         #region DbCommand
@@ -464,6 +475,33 @@ namespace Com.H.Data.Common
             yield break;
         }
 
+        public static async Task ExecuteCommandAsync(
+            this DbCommand dbc,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            CancellationToken cToken = default,
+            bool closeConnectionOnExit = false)
+        {
+            if (queryParams is not null)
+            {
+                if (queryParams is not IEnumerable<QueryParams>)
+                {
+                    queryParams = new List<QueryParams>()
+                    {
+                        new QueryParams()
+                        {
+                            DataModel = queryParams,
+                            QueryParamsRegex = queryParamsRegex
+                        }
+                    };
+                }
+            }
+
+            await ExecuteCommandAsyncMain(dbc, query, (IEnumerable<QueryParams>?)queryParams, cToken, closeConnectionOnExit);
+        }
+
+
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
     "CA1068:CancellationToken parameters must come last",
         Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
@@ -491,6 +529,9 @@ namespace Com.H.Data.Common
             }
             yield break;
         }
+
+
+
         #endregion
 
         #region DbConnection
@@ -521,6 +562,30 @@ namespace Com.H.Data.Common
                     yield return item;
             }
             yield break;
+        }
+
+        public static async Task ExecuteCommandAsync(
+            this DbConnection con,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            CancellationToken cToken = default,
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false
+            )
+        {
+            using (DbCommand dbc = con.CreateCommand())
+            {
+                if (commandTimeout.HasValue)
+                    dbc.CommandTimeout = commandTimeout.Value;
+                await ExecuteCommandAsync
+                    (dbc, 
+                    query, 
+                    queryParams, 
+                    queryParamsRegex, 
+                    cToken, 
+                    closeConnectionOnExit);
+            }
         }
 
 
@@ -554,6 +619,7 @@ namespace Com.H.Data.Common
             yield break;
         }
 
+
         #endregion
 
         #region connection string
@@ -585,6 +651,29 @@ namespace Com.H.Data.Common
                     yield return item;
             }
             yield break;
+        }
+
+        public static async Task ExecuteCommandAsync(
+            this string connectionString,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            CancellationToken cToken = default,
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false
+            )
+        {
+            using (DbConnection con = CreateDbConnection(connectionString))
+            {
+                await ExecuteCommandAsync(
+                    con,
+                    query,
+                    queryParams,
+                    queryParamsRegex,
+                    cToken,
+                    commandTimeout,
+                    closeConnectionOnExit);
+            }
         }
 
 
