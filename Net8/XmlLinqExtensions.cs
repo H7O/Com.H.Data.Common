@@ -31,12 +31,12 @@ namespace Com.H.Data.Common
 
             ExpandoObject obj = new();
 
-            Dictionary<string, List<string>> properties = new();
-            void AddProperty(string key, string value)
+            Dictionary<string, List<string>> properties = [];
+            void AddProperty(string k, string v)
             {
-                if (properties.ContainsKey(key))
-                    properties[key].Add(value);
-                else properties.Add(key, new List<string>() { value });
+                if (properties.TryGetValue(k, out List<string>? value))
+                    value.Add(v);
+                else properties.Add(k, [v]);
             }
 
             if (xElement.HasAttributes == false && xElement.HasElements == false)

@@ -110,7 +110,7 @@
                 || pathDelimiters == null
                 || pathDelimiters.Length < 1
                 ? default
-            : traversableItem.FindDescendant(path, findChild, pathDelimiters.Cast<string>().ToArray(), checkRoot);
+            : traversableItem.FindDescendant(path, findChild, pathDelimiters.Select(x=>x.ToString()).ToArray(), checkRoot);
 
 
 
@@ -196,7 +196,7 @@
                       : FindDescendants(traversableItem, 
                       path, 
                       findChildren, 
-                      pathDelimiters.Cast<string>().ToArray(),
+                      pathDelimiters.Select(x=>x.ToString()).ToArray(),
                       checkRoot);
 
 
@@ -220,14 +220,11 @@
             Func<TAccumulate?, TSource?, TAccumulate?> func,
             Func<TAccumulate?, TSource?, bool> untilCheck)
         {
-            if (source is null)
-                throw new ArgumentNullException(nameof(source));
+            ArgumentNullException.ThrowIfNull(source);
 
-            if (func is null)
-                throw new ArgumentNullException(nameof(func));
+            ArgumentNullException.ThrowIfNull(func);
 
-            if (untilCheck is null)
-                throw new ArgumentNullException(nameof(untilCheck));
+            ArgumentNullException.ThrowIfNull(untilCheck);
 
             _ = source.Any(x => untilCheck(seed = func(seed, x), x));
 
@@ -240,14 +237,11 @@
             Func<TAccumulate?, TSource?, TAccumulate?> func,
             Func<TAccumulate?, TSource?, bool> whileCheck)
         {
-            if (source is null)
-                throw new ArgumentNullException(nameof(source));
+            ArgumentNullException.ThrowIfNull(source);
 
-            if (func is null)
-                throw new ArgumentNullException(nameof(func));
+            ArgumentNullException.ThrowIfNull(func);
 
-            if (whileCheck is null)
-                throw new ArgumentNullException(nameof(whileCheck));
+            ArgumentNullException.ThrowIfNull(whileCheck);
             foreach (var item in source)
             {
                 if (!whileCheck(seed, item)) return seed;

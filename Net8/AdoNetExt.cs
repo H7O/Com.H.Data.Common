@@ -100,7 +100,7 @@ namespace Com.H.Data.Common
         /// <exception cref="ArgumentNullException"></exception>
         public static async Task EnsureOpenAsync(this DbConnection conn, CancellationToken cToken = default)
         {
-            if (conn is null) throw new ArgumentNullException(nameof(conn));
+            ArgumentNullException.ThrowIfNull(conn);
             if (conn.State != System.Data.ConnectionState.Open)
             {
                 // if the connection is in executing state, wait for it to finish
@@ -129,7 +129,7 @@ namespace Com.H.Data.Common
         /// <exception cref="ArgumentNullException"></exception>
         public static async Task EnsureClosedAsync(this DbConnection conn, CancellationToken cToken = default)
         {
-            if (conn is null) throw new ArgumentNullException(nameof(conn));
+            ArgumentNullException.ThrowIfNull(conn);
             if (conn.State != System.Data.ConnectionState.Closed)
             {
                 // if the connection is in executing state, wait for it to finish
@@ -169,9 +169,6 @@ namespace Com.H.Data.Common
         #region async
 
         #region main implementation
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
-            "CA1068:CancellationToken parameters must come last",
-            Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
         private static async IAsyncEnumerable<dynamic> ExecuteQueryAsyncMain(
         this DbCommand dbc,
         string query,
@@ -180,7 +177,7 @@ namespace Com.H.Data.Common
         bool closeConnectionOnExit = false
         )
         {
-            if (dbc == null) throw new ArgumentNullException(nameof(dbc));
+            ArgumentNullException.ThrowIfNull(dbc);
             if (string.IsNullOrEmpty(query)) throw new ArgumentNullException(nameof(query));
             var conn = dbc.Connection ?? throw new Exception("DbCommand.Connection is null");
             bool cont = true;
@@ -208,7 +205,7 @@ namespace Com.H.Data.Common
             Dictionary<string, dynamic> dataTypeDict = null!;
             if (hasDataTypes)
             {
-                dataTypeDict = new();
+                dataTypeDict = [];
                 foreach (var item in dataTypeList)
                 {
                     dataTypeDict.TryAdd(item.ParamName, item);
@@ -389,12 +386,12 @@ namespace Com.H.Data.Common
                         else
                         {
                             if (hasDataTypes 
-                                && dataTypeDict.ContainsKey(item.Name)
+                                && dataTypeDict.TryGetValue(item.Name, out dynamic? value)
                                 && !string.IsNullOrEmpty(item.Value as string)
                                 )
                             {
                                 
-                                switch (dataTypeDict[item.Name].Type)
+                                switch (value.Type)
                                 {
                                     case "json":
                                         // custom deseriliazation
@@ -430,9 +427,6 @@ namespace Com.H.Data.Common
         #endregion
 
         #region DbCommand
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
-            "CA1068:CancellationToken parameters must come last",
-            Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
 
         public static async IAsyncEnumerable<dynamic> ExecuteQueryAsync(
             this DbCommand dbc,
@@ -449,7 +443,7 @@ namespace Com.H.Data.Common
                 {
                     queryParams = new List<QueryParams>()
                     {
-                        new QueryParams()
+                        new ()
                         {
                             DataModel = queryParams,
                             QueryParamsRegex = queryParamsRegex
@@ -464,16 +458,12 @@ namespace Com.H.Data.Common
             yield break;
         }
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
-    "CA1068:CancellationToken parameters must come last",
-        Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
         public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
             this DbCommand dbc,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             [EnumeratorCancellation] CancellationToken cToken = default,
-            int? commandTimeout = null,
             bool closeConnectionOnExit = false
             )
         {
@@ -494,9 +484,6 @@ namespace Com.H.Data.Common
         #endregion
 
         #region DbConnection
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
-            "CA1068:CancellationToken parameters must come last",
-            Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
         public static async IAsyncEnumerable<dynamic> ExecuteQueryAsync(
             this DbConnection con,
             string query,
@@ -524,9 +511,6 @@ namespace Com.H.Data.Common
         }
 
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
-    "CA1068:CancellationToken parameters must come last",
-        Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
 
         public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
             this DbConnection con,
@@ -559,9 +543,6 @@ namespace Com.H.Data.Common
         #region connection string
 
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
-        "CA1068:CancellationToken parameters must come last",
-        Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
         public static async IAsyncEnumerable<dynamic> ExecuteQueryAsync(
             this string connectionString,
             string query,
@@ -588,9 +569,6 @@ namespace Com.H.Data.Common
         }
 
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Design",
-        "CA1068:CancellationToken parameters must come last",
-        Justification = "'closeConnectionOnExit' should be the last parameter as it's the most rarely used parameter")]
         public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
             this string connectionString,
             string query,
@@ -658,7 +636,6 @@ namespace Com.H.Data.Common
                 queryParams,
                 queryParamsRegex,
                 CancellationToken.None,
-                dbc.CommandTimeout,
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
         }

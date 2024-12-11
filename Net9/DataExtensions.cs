@@ -11,11 +11,11 @@ namespace Com.H.Data.Common
 
     public static class DataExtensions
     {
-        private static readonly JsonDocumentOptions _jsonOptions = new JsonDocumentOptions() { MaxDepth = 1 };
+        private static readonly JsonDocumentOptions _jsonOptions = new() { MaxDepth = 1 };
         public static IDictionary<string, object>? GetDataModelParameters(this object dataModel, bool descending = false)
         {
             if (dataModel == null) return null;
-            Dictionary<string, object> result = new();
+            Dictionary<string, object> result = [];
             foreach (var item in dataModel.EnsureEnumerable())
             {
                 if (((object?)item) == null) continue;
@@ -154,7 +154,7 @@ namespace Com.H.Data.Common
             this IEnumerable<QueryParams> queryParamsList,
             bool reverse = false)
         {
-            if (queryParamsList == null) return new List<QueryParams>();
+            if (queryParamsList == null) return [];
             var result = new List<QueryParams>();
             foreach (var group in (reverse?queryParamsList.Reverse():queryParamsList)
                 .GroupBy(x => x.QueryParamsRegex))

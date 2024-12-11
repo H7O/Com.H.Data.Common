@@ -11,7 +11,7 @@ namespace Com.H.Data.Common
 
     public static class DataExtensions
     {
-        private static readonly JsonDocumentOptions _jsonOptions = new JsonDocumentOptions() { MaxDepth = 1 };
+        private static readonly JsonDocumentOptions _jsonOptions = new() { MaxDepth = 1 };
         public static IDictionary<string, object>? GetDataModelParameters(this object dataModel, bool descending = false)
         {
             if (dataModel == null) return null;
@@ -128,7 +128,7 @@ namespace Com.H.Data.Common
         {
             if (queryParamsList == null) return new List<QueryParams>();
             var result = new List<QueryParams>();
-            queryParamsList.Reverse();
+            queryParamsList = queryParamsList.Reverse();
             foreach (var group in queryParamsList.GroupBy(x => x.QueryParamsRegex))
             {
                 var mergedDataModels = new Dictionary<string, object>();

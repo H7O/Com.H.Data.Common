@@ -15,14 +15,12 @@ namespace Com.H.Data.Common
 
         public (string Name, PropertyInfo Info)[] GetCachedProperties(Type type)
         {
-            if (type == null) throw new ArgumentNullException(nameof(type));
-            return _typesProperties.ContainsKey(type) ?
-                                _typesProperties[type]
-                                : (_typesProperties[type] = GetPropertiesWithColumnName(type).ToArray());
+            ArgumentNullException.ThrowIfNull(type);
+            return _typesProperties.TryGetValue(type, out (string Name, PropertyInfo Info)[]? value) ? value : (_typesProperties[type] = GetPropertiesWithColumnName(type).ToArray());
         }
         public (string Name, PropertyInfo Info)[] GetCachedProperties(object obj)
         {
-            if (obj == null) throw new ArgumentNullException(nameof(obj));
+            ArgumentNullException.ThrowIfNull(obj);
             if (obj.GetType() == typeof(ExpandoObject))
                 return ((ExpandoObject)obj).GetProperties().ToArray();
             return GetCachedProperties(obj.GetType());
@@ -54,7 +52,7 @@ namespace Com.H.Data.Common
         }
         public object? Map(object source, Type type)
             => type.GetMethod("Map")?.MakeGenericMethod(type)?
-            .Invoke(this, new object[] { source });
+            .Invoke(this, [source]);
 
         public T? Map<T>(object source)
         {
