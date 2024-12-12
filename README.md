@@ -29,6 +29,8 @@ var result = dc.ExecuteQuery("select 'John' as name, '123' as phone");
 // example: var result = dc.ExecuteQuery<YourDataModelClass>("select 'John' as name, '123' as phone");
 // Also, returns IAsyncEnumerable when called asynchronously via dc.ExecuteQueryAsync() 
 // or dc.ExecuteQueryAsync<T>()
+// And for executing a command that does not return any data, you can use the ExecuteCommand() (or ExecuteCommandAsync()) method
+
 
 foreach (var item in result)
 {
