@@ -173,8 +173,8 @@ namespace Com.H.Data.Common
         this DbCommand dbc,
         string query,
         IEnumerable<QueryParams>? queryParamList = null,
-        [EnumeratorCancellation] CancellationToken cToken = default,
-        bool closeConnectionOnExit = false
+        bool closeConnectionOnExit = false,
+        [EnumeratorCancellation] CancellationToken cToken = default
         )
         {
             ArgumentNullException.ThrowIfNull(dbc);
@@ -428,10 +428,11 @@ namespace Com.H.Data.Common
         this DbCommand dbc,
         string query,
         IEnumerable<QueryParams>? queryParamList = null,
-        CancellationToken cToken = default,
-        bool closeConnectionOnExit = false)
+        bool closeConnectionOnExit = false,
+        CancellationToken cToken = default
+            )
         {
-            await foreach (var _ in ExecuteQueryAsyncMain(dbc, query, queryParamList, cToken, closeConnectionOnExit)) ;
+            await foreach (var _ in ExecuteQueryAsyncMain(dbc, query, queryParamList, closeConnectionOnExit, cToken)) ;
         }
 
 
@@ -444,8 +445,8 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            [EnumeratorCancellation] CancellationToken cToken = default,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            [EnumeratorCancellation] CancellationToken cToken = default
             )
         {
             if (queryParams is not null)
@@ -464,7 +465,12 @@ namespace Com.H.Data.Common
             }
 
             await foreach (var item in
-                ExecuteQueryAsyncMain(dbc, query, (IEnumerable<QueryParams>?)queryParams, cToken, closeConnectionOnExit))
+                ExecuteQueryAsyncMain(
+                    dbc, 
+                    query, 
+                    (IEnumerable<QueryParams>?)queryParams, 
+                    closeConnectionOnExit, 
+                    cToken))
                 yield return item;
             yield break;
         }
@@ -474,8 +480,9 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            CancellationToken cToken = default,
-            bool closeConnectionOnExit = false)
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
         {
             if (queryParams is not null)
             {
@@ -492,7 +499,12 @@ namespace Com.H.Data.Common
                 }
             }
 
-            await ExecuteCommandAsyncMain(dbc, query, (IEnumerable<QueryParams>?)queryParams, cToken, closeConnectionOnExit);
+            await ExecuteCommandAsyncMain(
+                dbc, 
+                query, 
+                (IEnumerable<QueryParams>?)queryParams, 
+                closeConnectionOnExit, 
+                cToken);
         }
 
 
@@ -501,8 +513,8 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            [EnumeratorCancellation] CancellationToken cToken = default,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            [EnumeratorCancellation] CancellationToken cToken = default
             )
         {
             await foreach (var item in ExecuteQueryAsync(
@@ -510,8 +522,9 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                cToken,
-                closeConnectionOnExit))
+                closeConnectionOnExit,
+                cToken
+                ))
             {
                 var converted = _mapper.Map<T>(item);
                 if (converted is null) continue;
@@ -530,9 +543,9 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            [EnumeratorCancellation] CancellationToken cToken = default,
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            [EnumeratorCancellation] CancellationToken cToken = default
             )
         {
             using (DbCommand dbc = con.CreateCommand())
@@ -544,8 +557,9 @@ namespace Com.H.Data.Common
                     query,
                     queryParams,
                     queryParamsRegex,
-                    cToken,
-                    closeConnectionOnExit))
+                    closeConnectionOnExit,
+                    cToken
+                    ))
                     yield return item;
             }
             yield break;
@@ -556,9 +570,9 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            CancellationToken cToken = default,
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
             )
         {
             using DbCommand dbc = con.CreateCommand();
@@ -569,8 +583,9 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                cToken,
-                closeConnectionOnExit);
+                closeConnectionOnExit,
+                cToken
+                );
         }
 
 
@@ -580,9 +595,9 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            [EnumeratorCancellation] CancellationToken cToken = default,
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            [EnumeratorCancellation] CancellationToken cToken = default
             )
         {
             await foreach (var item in ExecuteQueryAsync(
@@ -590,9 +605,10 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                cToken,
                 commandTimeout,
-                closeConnectionOnExit))
+                closeConnectionOnExit,
+                cToken
+                ))
             {
                 var converted = _mapper.Map<T>(item);
                 if (converted is null) continue;
@@ -612,9 +628,9 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            [EnumeratorCancellation] CancellationToken cToken = default,
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            [EnumeratorCancellation] CancellationToken cToken = default
             )
         {
             using (DbConnection con = CreateDbConnection(connectionString))
@@ -624,9 +640,10 @@ namespace Com.H.Data.Common
                     query,
                     queryParams,
                     queryParamsRegex,
-                    cToken,
                     commandTimeout,
-                    closeConnectionOnExit))
+                    closeConnectionOnExit,
+                    cToken
+                    ))
                     yield return item;
             }
             yield break;
@@ -637,9 +654,9 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            CancellationToken cToken = default,
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
             )
         {
             using DbConnection con = CreateDbConnection(connectionString);
@@ -648,9 +665,9 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                cToken,
                 commandTimeout,
-                closeConnectionOnExit);
+                closeConnectionOnExit,
+                cToken);
         }
 
 
@@ -659,9 +676,9 @@ namespace Com.H.Data.Common
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            [EnumeratorCancellation] CancellationToken cToken = default,
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false
+            bool closeConnectionOnExit = false,
+            [EnumeratorCancellation] CancellationToken cToken = default
             )
         {
             using (DbConnection con = CreateDbConnection(connectionString))
@@ -672,9 +689,9 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                cToken,
                 commandTimeout,
-                closeConnectionOnExit))
+                closeConnectionOnExit,
+                cToken))
                 {
                     var converted = _mapper.Map<T>(item);
                     if (converted is null) continue;
@@ -704,8 +721,8 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None)
                 .ToBlockingEnumerable();
         }
 
@@ -720,10 +737,9 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None)
                 .GetAwaiter().GetResult();
-
         }
 
         public static IEnumerable<T> ExecuteQuery<T>(
@@ -737,8 +753,8 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None)
                 .ToBlockingEnumerable();
         }
 
@@ -757,9 +773,10 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
                 commandTimeout,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None
+                )
                 .ToBlockingEnumerable();
         }
 
@@ -776,9 +793,10 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
                 commandTimeout,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None
+                )
                 .GetAwaiter().GetResult();
         }
 
@@ -794,9 +812,9 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
                 commandTimeout,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None)
                 .ToBlockingEnumerable();
         }
         #endregion
@@ -814,9 +832,9 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
                 commandTimeout,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None)
                 .ToBlockingEnumerable();
         }
         public static void ExecuteCommand(
@@ -831,9 +849,10 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
                 commandTimeout,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None
+                )
                 .GetAwaiter().GetResult();
         }
 
@@ -851,9 +870,10 @@ namespace Com.H.Data.Common
                 query,
                 queryParams,
                 queryParamsRegex,
-                CancellationToken.None,
                 commandTimeout,
-                closeConnectionOnExit)
+                closeConnectionOnExit,
+                CancellationToken.None
+                )
                 .ToBlockingEnumerable();
         }
 

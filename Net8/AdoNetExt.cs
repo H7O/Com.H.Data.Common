@@ -424,6 +424,17 @@ namespace Com.H.Data.Common
             yield break;
         }
 
+        private static async Task ExecuteCommandAsyncMain(
+            this DbCommand dbc,
+            string query,
+            IEnumerable<QueryParams>? queryParamList = null,
+            CancellationToken cToken = default,
+            bool closeConnectionOnExit = false)
+        {
+            await foreach (var _ in ExecuteQueryAsyncMain(dbc, query, queryParamList, cToken, closeConnectionOnExit)) ;
+        }
+
+
         #endregion
 
         #region DbCommand
@@ -456,6 +467,32 @@ namespace Com.H.Data.Common
                 ExecuteQueryAsyncMain(dbc, query, (IEnumerable<QueryParams>?)queryParams, cToken, closeConnectionOnExit))
                 yield return item;
             yield break;
+        }
+
+        public static async Task ExecuteCommandAsync(
+            this DbCommand dbc,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            CancellationToken cToken = default,
+            bool closeConnectionOnExit = false)
+        {
+            if (queryParams is not null)
+            {
+                if (queryParams is not IEnumerable<QueryParams>)
+                {
+                    queryParams = new List<QueryParams>()
+                    {
+                        new()
+                        {
+                            DataModel = queryParams,
+                            QueryParamsRegex = queryParamsRegex
+                        }
+                    };
+                }
+            }
+
+            await ExecuteCommandAsyncMain(dbc, query, (IEnumerable<QueryParams>?)queryParams, cToken, closeConnectionOnExit);
         }
 
         public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
@@ -508,6 +545,28 @@ namespace Com.H.Data.Common
                     yield return item;
             }
             yield break;
+        }
+
+        public static async Task ExecuteCommandAsync(
+            this DbConnection con,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            CancellationToken cToken = default,
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false
+            )
+        {
+            using DbCommand dbc = con.CreateCommand();
+            if (commandTimeout.HasValue)
+                dbc.CommandTimeout = commandTimeout.Value;
+            await ExecuteCommandAsync
+                (dbc,
+                query,
+                queryParams,
+                queryParamsRegex,
+                cToken,
+                closeConnectionOnExit);
         }
 
 
@@ -568,6 +627,26 @@ namespace Com.H.Data.Common
             yield break;
         }
 
+        public static async Task ExecuteCommandAsync(
+            this string connectionString,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            CancellationToken cToken = default,
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false
+            )
+        {
+            using DbConnection con = CreateDbConnection(connectionString);
+            await ExecuteCommandAsync(
+                con,
+                query,
+                queryParams,
+                queryParamsRegex,
+                cToken,
+                commandTimeout,
+                closeConnectionOnExit);
+        }
 
         public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
             this string connectionString,
@@ -623,6 +702,21 @@ namespace Com.H.Data.Common
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
         }
+        public static void ExecuteCommand(
+            this DbCommand dbc,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            bool closeConnectionOnExit = false)
+        {
+            dbc.ExecuteCommandAsync(
+                query,
+                queryParams,
+                queryParamsRegex,
+                CancellationToken.None,
+                closeConnectionOnExit)
+                .GetAwaiter().GetResult();
+        }
 
         public static IEnumerable<T> ExecuteQuery<T>(
             this DbCommand dbc,
@@ -661,6 +755,25 @@ namespace Com.H.Data.Common
                 .ToBlockingEnumerable();
         }
 
+        public static void ExecuteCommand(
+            this DbConnection con,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false)
+        {
+            con.ExecuteCommandAsync(
+                query,
+                queryParams,
+                queryParamsRegex,
+                CancellationToken.None,
+                commandTimeout,
+                closeConnectionOnExit
+                )
+                .GetAwaiter().GetResult();
+        }
+
         public static IEnumerable<T> ExecuteQuery<T>(
             this DbConnection con,
             string query,
@@ -697,6 +810,25 @@ namespace Com.H.Data.Common
                 commandTimeout,
                 closeConnectionOnExit)
                 .ToBlockingEnumerable();
+        }
+
+        public static void ExecuteCommand(
+            this string connectionString,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false)
+        {
+            connectionString.ExecuteCommandAsync(
+                query,
+                queryParams,
+                queryParamsRegex,
+                CancellationToken.None,
+                commandTimeout,
+                closeConnectionOnExit
+                )
+                .GetAwaiter().GetResult();
         }
 
         public static IEnumerable<T> ExecuteQuery<T>(
