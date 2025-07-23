@@ -23,19 +23,23 @@ DbConnection dc = new SqlConnection(conStr);
 // are defined on DbConnection
 
 var result = dc.ExecuteQuery("select 'John' as name, '123' as phone");
-// ^ returns IEnumerable<dynamic>, you can also return IEnumerable<T> where T is your data model class
-// by using the ExecuteQuery<T> method which returns IEnumerable<T>
-// example: var result = dc.ExecuteQuery<YourDataModelClass>("select 'John' as name, '123' as phone");
+// ^ returns IEnumerable<dynamic>, you can also return IEnumerable<T> where T is your data model class by using the ExecuteQuery<T> method.
+
+// Example: var result = dc.ExecuteQuery<YourDataModelClass>("select 'John' as name, '123' as phone");
 // Also, returns IAsyncEnumerable when called asynchronously via dc.ExecuteQueryAsync() 
 // or dc.ExecuteQueryAsync<T>()
 // And for executing a command that does not return any data, you can use the ExecuteCommand() 
 // or ExecuteCommandAsync() methods
+
 
 foreach (var item in result)
 {
     System.Console.WriteLine($"name = {item.name}, phone = {item.phone}");
 }
 ```
+> **Note**: The returned IEnumerable (whether `IEnumerable<dynamic>` or `IEnumerable<T>`) is an an IEnumerable derived class that implements the `IEnumerable<T>` interface, which means you can use it anywhere    `IEnumerable<T>` is expected.<br/>
+For example, you can use it in a foreach loop, or pass it to LINQ methods like Where, Select, etc.
+
 
 ## Sample 2
 This sample demonstrates how to pass parameters to your SQL query
@@ -47,8 +51,6 @@ using Microsoft.Data.SqlClient;
 
 string conStr = @"your connection string goes here";
 DbConnection dc = new SqlConnection(conStr);
-// ^ note the use of DbConnection instead of SqlConnection. The extension methods 
-// are defined on DbConnection
 
 var queryParams = new { name = "Jane" };
 // ^ queryParams could be an anonymous object (similar to the example above)
@@ -145,7 +147,31 @@ To tell the library to parse the nested JSON data, you just need to enclose the 
 
 In our example above, we are filling the property `phones` with JSON string. Hence we used the syntax `{type{json{phones}}}` to tell the library to parse the JSON string and fill the `phones` property with the parsed JSON data.
 
-**Note**: Another syntax for parsing XML string is `{type{xml{your_property_name}}}`.
+> **Note**: Another syntax for parsing XML string is `{type{xml{your_property_name}}}`.
+
+## Sample 4
+This sample demonstrates how to close a reader if you're using `ExecuteQuery` or `ExecuteQueryAsync` and partially retrieving records (e.g., using `.FirstOrDefault()` or `.Take(n)`) and wants to execute
+another query on the same connection while the reader is still open on the first query (i.e., items of the first query are still being enumerated).
+In such cases, without closing the reader of the first query, the second query will throw an exception indicating `There is already an open DataReader associated with this Connection which must be closed first`.
+
+
+```csharp
+using Com.H.Data.Common; 
+using System.Data.Common;
+using Microsoft.Data.SqlClient;
+using System.Linq;
+
+string conStr = @"your connection string goes here";
+DbConnection dc = new SqlConnection(conStr);
+
+var result = dc.ExecuteQuery("SELECT * FROM Users");
+var firstUser = result.FirstOrDefault();
+
+result.Dispose(); // Closes any open reader on `dc`
+
+var anotherResult = dc.ExecuteQuery("SELECT * FROM Orders"); // Safe! No reader exception from previous query
+```
+
 
 ## What other databases this library supports?
 Any ADO.NET provider that implements DbConnection and DbCommand classes should work with this library.

@@ -8,6 +8,9 @@ using System.Text.RegularExpressions;
 
 namespace Com.H.Data.Common
 {
+
+
+
     public static class AdoNetExt
     {
         public static string DefaultParameterPrefix { get; set; } = "@";
@@ -43,7 +46,7 @@ namespace Com.H.Data.Common
         }
 
 
-        private readonly static DataMapper _mapper = new();
+        internal readonly static DataMapper _mapper = new();
 
         public static DbConnection CreateDbConnection(this string connStr, string providerName = "Microsoft.Data.SqlClient")
         {
@@ -166,27 +169,27 @@ namespace Com.H.Data.Common
         }
 
 
-        #region async
+        #region implementation
 
         #region main implementation
-        private static async IAsyncEnumerable<dynamic> ExecuteQueryAsyncMain(
+        
+        /// <summary>
+        /// Main implementation that executes queries and returns resource-safe DbAsyncQueryResult.
+        /// This is the core method used by all ExecuteQueryAsync extension methods.
+        /// </summary>
+        internal static async Task<DbAsyncQueryResult<dynamic>> ExecuteQueryAsyncMain(
         this DbCommand dbc,
         string query,
         IEnumerable<QueryParams>? queryParamList = null,
         bool closeConnectionOnExit = false,
-        [EnumeratorCancellation] CancellationToken cToken = default
+        CancellationToken cToken = default
         )
         {
             ArgumentNullException.ThrowIfNull(dbc);
             if (string.IsNullOrEmpty(query)) throw new ArgumentNullException(nameof(query));
             var conn = dbc.Connection ?? throw new Exception("DbCommand.Connection is null");
-            bool cont = true;
 
             #region get data types from the query
-
-            // get the data types from the query
-
-
             var dataTypeList = DefaultDataTypeRegexCompiled.Matches(query)
                 .Cast<Match>()
                 .Reverse()
@@ -212,13 +215,8 @@ namespace Com.H.Data.Common
                 }
             }
 
-            
-            
-
-
             // iterate through the data types found in the query
             // and replace the data type placeholders with the `ParamName` value
-
             foreach (var item in dataTypeList)
             {
                 query = query.Replace(
@@ -230,148 +228,81 @@ namespace Com.H.Data.Common
                     StringComparison.OrdinalIgnoreCase
                     );
             }
-
-
-
-
             #endregion
 
-
-
-            DbDataReader? reader = null;
+            DbDataReader reader;
             DbCommand command = dbc;
-            try
+            
+            await conn.EnsureOpenAsync(cToken);
+            cToken.ThrowIfCancellationRequested();
+
+            // Process parameters
+            if (queryParamList is not null)
             {
-                await conn.EnsureOpenAsync(cToken);
-                cToken.ThrowIfCancellationRequested();
-                // query = conn.CreateCommand();
-                // query.CommandType = CommandType.Text;
-
-                // Extract placeholder parameter names (without the markers) from the SQL query.
-                // Each QueryParams object in queryParamList has it's own set of markers
-                // and also has it's own set of parameters that are passed in the object's DataModel property.
-                // Finally, each object in queryParamList also has it's own regular expression pattern
-                // in its RegexPattern property telling this method how to extract the parameter names from the SQL query.
-
-                if (queryParamList is not null)
+                int count = 0;
+                foreach (var queryParam in queryParamList.ReduceToUnique(true))
                 {
-                    int count = 0;
-                    // note: reverse the order of the queryParamList
-                    // so that the last object in the list has the highest priority (i.e., Last In First Out)
-                    foreach (var queryParam in queryParamList.ReduceToUnique(true))
-                    {
-                        count++;
-                        // Note: pass true to GetDataModelParameters to get the parameters in
-                        // the reverse order of parameters declared in the DataModel that would go well with the
-                        // Last In First Out (LIFO) order of the queryParamList.
-                        var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
-                        var matchingQueryVars =
-                            Regex.Matches(query, queryParam.QueryParamsRegex)
-                            .Cast<Match>()
-                            .Select(x => new
-                            {
-                                Name = x.Groups["param"].Value,
-                                OpenMarker = x.Groups["open_marker"].Value,
-                                CloseMarker = x.Groups["close_marker"].Value
-                            })
-                            .Where(x => !string.IsNullOrEmpty(x.Name))
-                            .Distinct().ToList();
-
-
-                        foreach (var matchingQueryVar in matchingQueryVars)
+                    count++;
+                    var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
+                    var matchingQueryVars =
+                        Regex.Matches(query, queryParam.QueryParamsRegex)
+                        .Cast<Match>()
+                        .Select(x => new
                         {
-                            // see if the query parameter name matches a data model field name
-                            // if so, then add the query parameter name to the list of placeholders
+                            Name = x.Groups["param"].Value,
+                            OpenMarker = x.Groups["open_marker"].Value,
+                            CloseMarker = x.Groups["close_marker"].Value
+                        })
+                        .Where(x => !string.IsNullOrEmpty(x.Name))
+                        .Distinct().ToList();
 
-                            // method 1: using LINQ
-                            //var matchingDataModelField = dataModelFields?
-                            //    .FirstOrDefault(x => x.Key.Equals(queryVarNameWithoutMarkers, StringComparison.InvariantCultureIgnoreCase));
+                    foreach (var matchingQueryVar in matchingQueryVars)
+                    {
+                        object? matchingDataModelPropertyValue = null;
+                        dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
 
-                            // method 2: using TryGetValue
-                            object? matchingDataModelPropertyValue = null;
-                            dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
+                        var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", DefaultParameterPrefix)
+                            .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
+                            .Replace("{{ParameterName}}", _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_"));
 
+                        query = query.Replace(
+                                    matchingQueryVar.OpenMarker
+                                    + matchingQueryVar.Name
+                                    + matchingQueryVar.CloseMarker
+                                    , sqlParamName,
+                                    StringComparison.OrdinalIgnoreCase
+                                    );
 
-                            // if the query parameter name matches a data model field name
-                            // then add the query parameter name to the list of placeholders
-                            // and also add the value of the data model field to the list of placeholders
-                            // so that the query parameter name is replaced with a prepared statement variable
-                            // and the value of the data model field is passed as a parameter to the prepared statement variable
-
-                            // Note: the prepared statement variable name is prefixed with @vxv_<count>_
-                            // where <count> is the number of the QueryParams object in the queryParamList
-                            // e.g. if the queryParamList has 3 objects, then the prepared statement variable name
-                            // for the first object in the queryParamList will be @vxv_1_<query parameter name>
-                            // and the prepared statement variable name for the second object in the queryParamList
-                            // will be @vxv_2_<query parameter name>, and so on.
-                            // This is done to ensure that the prepared statement variable names are unique
-                            // across all the objects in the queryParamList.
-
-                            // special characters in the query parameter name are replaced with underscores
-                            // e.g. if the query parameter name is "my param", then the prepared statement variable name
-
-                            // method 1: using configurable template
-                            var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", DefaultParameterPrefix)
-                                .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
-                                .Replace("{{ParameterName}}", _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_"));
-                            // method 2: using fixed template
-                            //    var sqlParamName = $"@vxv_{count}_" +
-                            //    _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
-
-                            query = query.Replace(
-                                        matchingQueryVar.OpenMarker
-                                        + matchingQueryVar.Name
-                                        + matchingQueryVar.CloseMarker
-                                        , sqlParamName,
-                                        StringComparison.OrdinalIgnoreCase
-                                        );
-
-                            var p = command.CreateParameter();
-                            p.ParameterName = sqlParamName;
-                            p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
-                            command.Parameters.Add(p);
-                        }
-
+                        var p = command.CreateParameter();
+                        p.ParameterName = sqlParamName;
+                        p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
+                        command.Parameters.Add(p);
                     }
                 }
-
-
-                command.CommandText = query;
-
-                reader = await command.ExecuteReaderAsync(cToken);
-                cToken.ThrowIfCancellationRequested();
-
-            }
-            catch (Exception ex)
-            {
-                if (reader is not null)
-                    await reader.EnsureClosedAsync();
-                if (closeConnectionOnExit)
-                    await conn.EnsureClosedAsync(cToken);
-
-                throw new Exception(
-                    ex.GenerateError(
-                        command,
-                        query,
-                        command?.Parameters?.ToDictionary()), ex);
             }
 
+            command.CommandText = query;
+            reader = await command.ExecuteReaderAsync(cToken);
+            cToken.ThrowIfCancellationRequested();
+
+            var results = CreateAsyncEnumerableFromReader(reader, hasDataTypes, dataTypeDict, cToken);
+            return new DbAsyncQueryResult<dynamic>(results, reader, conn, closeConnectionOnExit);
+        }
+
+        internal static async IAsyncEnumerable<dynamic> CreateAsyncEnumerableFromReader(
+            DbDataReader reader, 
+            bool hasDataTypes, 
+            Dictionary<string, dynamic>? dataTypeDict,
+            [EnumeratorCancellation] CancellationToken cToken = default)
+        {
             if (reader?.HasRows == true)
             {
+                bool cont = true;
                 while (cont)
                 {
-                    try
-                    {
-                        cont = await reader.ReadAsync(cToken);
-                        cToken.ThrowIfCancellationRequested();
-                        if (!cont) break;
-                    }
-                    catch
-                    {
-                        await reader.EnsureClosedAsync();
-                        if (closeConnectionOnExit) await conn.EnsureClosedAsync(cToken);
-                        throw;
-                    }
+                    cont = await reader.ReadAsync(cToken);
+                    cToken.ThrowIfCancellationRequested();
+                    if (!cont) break;
 
                     ExpandoObject result = new();
 
@@ -386,6 +317,7 @@ namespace Com.H.Data.Common
                         else
                         {
                             if (hasDataTypes 
+                                && dataTypeDict != null
                                 && dataTypeDict.TryGetValue(item.Name, out dynamic? value)
                                 && !string.IsNullOrEmpty(item.Value as string)
                                 )
@@ -394,14 +326,9 @@ namespace Com.H.Data.Common
                                 switch (value.Type)
                                 {
                                     case "json":
-                                        // custom deseriliazation
                                         result.TryAdd(item.Name, (object)(item.Value as string)!.ParseJson());
-                                        // System.Text.Json deserialization
-                                        // result.TryAdd(item.Name, (object)JsonSerializer.Deserialize<dynamic>((item.Value as string)));
-                                        // result.TryAdd(item.Name, JsonDocument.Parse((item.Value as string)!).RootElement);
                                         break;
                                     case "xml":
-                                        // custom deseriliazation
                                         result.TryAdd(item.Name, (object) (item.Value as string)!.ParseXml());
                                         break;
                                     default:
@@ -417,65 +344,21 @@ namespace Com.H.Data.Common
                     yield return result;
                 }
             }
-            cToken.ThrowIfCancellationRequested();
-            if (reader is not null)
-                await reader.EnsureClosedAsync();
-            if (closeConnectionOnExit) await conn.EnsureClosedAsync(cToken);
-            yield break;
         }
 
-        private static async Task ExecuteCommandAsyncMain(
-        this DbCommand dbc,
-        string query,
-        IEnumerable<QueryParams>? queryParamList = null,
-        bool closeConnectionOnExit = false,
-        CancellationToken cToken = default
-            )
-        {
-            await foreach (var _ in ExecuteQueryAsyncMain(dbc, query, queryParamList, closeConnectionOnExit, cToken)) ;
-        }
+
 
 
         #endregion
 
         #region DbCommand
 
-        public static async IAsyncEnumerable<dynamic> ExecuteQueryAsync(
-            this DbCommand dbc,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            bool closeConnectionOnExit = false,
-            [EnumeratorCancellation] CancellationToken cToken = default
-            )
-        {
-            if (queryParams is not null)
-            {
-                if (queryParams is not IEnumerable<QueryParams>)
-                {
-                    queryParams = new List<QueryParams>()
-                    {
-                        new()
-                        {
-                            DataModel = queryParams,
-                            QueryParamsRegex = queryParamsRegex
-                        }
-                    };
-                }
-            }
-
-            await foreach (var item in
-                ExecuteQueryAsyncMain(
-                    dbc, 
-                    query, 
-                    (IEnumerable<QueryParams>?)queryParams, 
-                    closeConnectionOnExit, 
-                    cToken))
-                yield return item;
-            yield break;
-        }
-
-        public static async Task ExecuteCommandAsync(
+        /// <summary>
+        /// Executes a query and returns an async result with automatic resource management.
+        /// Can be used directly where IAsyncEnumerable&lt;dynamic&gt; is expected.
+        /// Must be disposed (use 'using' statement).
+        /// </summary>
+        public static async Task<DbAsyncQueryResult<dynamic>> ExecuteQueryAsync(
             this DbCommand dbc,
             string query,
             object? queryParams = null,
@@ -499,38 +382,99 @@ namespace Com.H.Data.Common
                 }
             }
 
-            await ExecuteCommandAsyncMain(
-                dbc, 
-                query, 
-                (IEnumerable<QueryParams>?)queryParams, 
-                closeConnectionOnExit, 
-                cToken);
+            return await ExecuteQueryAsyncMain(
+                dbc, query, (IEnumerable<QueryParams>?)queryParams, closeConnectionOnExit, cToken);
         }
 
-
-        public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
+        /// <summary>
+        /// Executes a query and returns a sync result with automatic resource management.
+        /// Can be used directly where IEnumerable&lt;dynamic&gt; is expected.
+        /// Must be disposed (use 'using' statement).
+        /// </summary>
+        public static DbQueryResult<dynamic> ExecuteQuery(
             this DbCommand dbc,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             bool closeConnectionOnExit = false,
-            [EnumeratorCancellation] CancellationToken cToken = default
+            CancellationToken cToken = default
             )
         {
-            await foreach (var item in ExecuteQueryAsync(
-                dbc,
-                query,
-                queryParams,
-                queryParamsRegex,
-                closeConnectionOnExit,
-                cToken
-                ))
-            {
-                var converted = _mapper.Map<T>(item);
-                if (converted is null) continue;
-                yield return converted;
-            }
-            yield break;
+            var asyncResult = ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
+            
+            return new DbQueryResult<dynamic>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
+        }
+
+        public static async Task ExecuteCommandAsync(
+            this DbCommand dbc,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
+        {
+            using var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+            await foreach (var _ in result) ; // Consume the enumerable to execute the command
+        }
+
+        public static void ExecuteCommand(
+            this DbCommand dbc,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
+        {
+            ExecuteCommandAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Executes a query and returns an async result with typed objects and automatic resource management.
+        /// Can be used directly where IAsyncEnumerable&lt;T&gt; is expected.
+        /// Automatically disposes resources when goes out of scope (via GC), or when used in a 'using' statement, or directly disposed via DisposeAsync().
+        /// </summary>
+        public static async Task<DbAsyncQueryResult<T>> ExecuteQueryAsync<T>(
+            this DbCommand dbc,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
+        {
+            var dynamicResult = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+            var typedAsyncEnumerable = ConvertToType<T>(dynamicResult.AsAsyncEnumerable());
+            
+            return new DbAsyncQueryResult<T>(
+                typedAsyncEnumerable,
+                dynamicResult.Reader,
+                dynamicResult.Connection,
+                closeConnectionOnExit
+            );
+        }
+
+        /// <summary>
+        /// Executes a query and returns a sync result with typed objects and automatic resource management.
+        /// Can be used directly where IEnumerable&lt;T&gt; is expected.
+        /// Automatically disposes resources when goes out of scope (via GC), or when used in a 'using' statement, or directly disposed via Dispose().
+        /// </summary>
+        public static DbQueryResult<T> ExecuteQuery<T>(
+            this DbCommand dbc,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
+        {
+            var asyncResult = ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
+            
+            return new DbQueryResult<T>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
 
 
@@ -538,31 +482,49 @@ namespace Com.H.Data.Common
         #endregion
 
         #region DbConnection
-        public static async IAsyncEnumerable<dynamic> ExecuteQueryAsync(
+
+        /// <summary>
+        /// Executes a query and returns an async result with automatic resource management.
+        /// Can be used directly where IAsyncEnumerable&lt;dynamic&gt; is expected.
+        /// Must be disposed (use 'using' statement).
+        /// </summary>
+        public static async Task<DbAsyncQueryResult<dynamic>> ExecuteQueryAsync(
             this DbConnection con,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             int? commandTimeout = null,
             bool closeConnectionOnExit = false,
-            [EnumeratorCancellation] CancellationToken cToken = default
+            CancellationToken cToken = default
             )
         {
             using (DbCommand dbc = con.CreateCommand())
             {
                 if (commandTimeout.HasValue)
                     dbc.CommandTimeout = commandTimeout.Value;
-                await foreach (var item in ExecuteQueryAsync(
-                    dbc,
-                    query,
-                    queryParams,
-                    queryParamsRegex,
-                    closeConnectionOnExit,
-                    cToken
-                    ))
-                    yield return item;
+                return await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
             }
-            yield break;
+        }
+
+        /// <summary>
+        /// Executes a query and returns a sync result with automatic resource management.
+        /// Can be used directly where IEnumerable&lt;dynamic&gt; is expected.
+        /// Automatically disposes resources when goes out of scope (via GC), or when used in a 'using' statement, or directly disposed via Dispose().
+        /// </summary>
+        public static DbQueryResult<dynamic> ExecuteQuery(
+            this DbConnection con,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
+        {
+            var asyncResult = ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
+            
+            return new DbQueryResult<dynamic>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
 
         public static async Task ExecuteCommandAsync(
@@ -575,311 +537,213 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            using DbCommand dbc = con.CreateCommand();
-            if (commandTimeout.HasValue)
-                dbc.CommandTimeout = commandTimeout.Value;
-            await ExecuteCommandAsync
-                (dbc,
-                query,
-                queryParams,
-                queryParamsRegex,
-                closeConnectionOnExit,
-                cToken
-                );
+            using var result = await ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken);
+            await foreach (var _ in result) ; // Consume the enumerable to execute the command
         }
 
-
-
-        public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
+        public static void ExecuteCommand(
             this DbConnection con,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             int? commandTimeout = null,
             bool closeConnectionOnExit = false,
-            [EnumeratorCancellation] CancellationToken cToken = default
+            CancellationToken cToken = default
             )
         {
-            await foreach (var item in ExecuteQueryAsync(
-                con,
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                cToken
-                ))
-            {
-                var converted = _mapper.Map<T>(item);
-                if (converted is null) continue;
-                yield return converted;
-            }
-            yield break;
+            ExecuteCommandAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
         }
 
+        /// <summary>
+        /// Executes a query and returns an async result with typed objects and automatic resource management.
+        /// Can be used directly where IAsyncEnumerable&lt;T&gt; is expected.
+        /// </summary>
+        public static async Task<DbAsyncQueryResult<T>> ExecuteQueryAsync<T>(
+            this DbConnection con,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
+        {
+            using (DbCommand dbc = con.CreateCommand())
+            {
+                if (commandTimeout.HasValue)
+                    dbc.CommandTimeout = commandTimeout.Value;
+                return await ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+            }
+        }
 
+        /// <summary>
+        /// Executes a query and returns a sync result with typed objects and automatic resource management.
+        /// Can be used directly where IEnumerable&lt;T&gt; is expected.
+        /// Must be disposed (use 'using' statement).
+        /// </summary>
+        public static DbQueryResult<T> ExecuteQuery<T>(
+            this DbConnection con,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = false,
+            CancellationToken cToken = default
+            )
+        {
+            var asyncResult = ExecuteQueryAsync<T>(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
+            
+            return new DbQueryResult<T>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
+        }
         #endregion
 
         #region connection string
 
-
-        public static async IAsyncEnumerable<dynamic> ExecuteQueryAsync(
+        /// <summary>
+        /// Executes a query and returns an async result with automatic resource management.
+        /// Can be used directly where IAsyncEnumerable&lt;dynamic&gt; is expected.
+        /// Must be disposed (use 'using' statement). Connection will be automatically closed when disposed.
+        /// </summary>
+        public static async Task<DbAsyncQueryResult<dynamic>> ExecuteQueryAsync(
             this string connectionString,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false,
-            [EnumeratorCancellation] CancellationToken cToken = default
-            )
-        {
-            using (DbConnection con = CreateDbConnection(connectionString))
-            {
-                await foreach (var item in ExecuteQueryAsync(
-                    con,
-                    query,
-                    queryParams,
-                    queryParamsRegex,
-                    commandTimeout,
-                    closeConnectionOnExit,
-                    cToken
-                    ))
-                    yield return item;
-            }
-            yield break;
-        }
-
-        public static async Task ExecuteCommandAsync(
-            this string connectionString,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            int? commandTimeout = null,
-            bool closeConnectionOnExit = false,
+            bool closeConnectionOnExit = true, // Default to true for connection string since we're creating the connection
             CancellationToken cToken = default
             )
         {
-            using DbConnection con = CreateDbConnection(connectionString);
-            await ExecuteCommandAsync(
-                con,
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                cToken);
-        }
-
-
-        public static async IAsyncEnumerable<T> ExecuteQueryAsync<T>(
-            this string connectionString,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            int? commandTimeout = null,
-            bool closeConnectionOnExit = false,
-            [EnumeratorCancellation] CancellationToken cToken = default
-            )
-        {
             using (DbConnection con = CreateDbConnection(connectionString))
             {
-
-                await foreach (var item in ExecuteQueryAsync(
-                con,
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                cToken))
+                using (DbCommand dbc = con.CreateCommand())
                 {
-                    var converted = _mapper.Map<T>(item);
-                    if (converted is null) continue;
-                    yield return converted;
+                    if (commandTimeout.HasValue)
+                        dbc.CommandTimeout = commandTimeout.Value;
+                    return await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
                 }
             }
-            yield break;
         }
 
-
-        #endregion
-
-        #endregion
-
-
-        #region sync
-
-        #region DbCommand
-        public static IEnumerable<dynamic> ExecuteQuery(
-            this DbCommand dbc,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            bool closeConnectionOnExit = false)
-        {
-            return dbc.ExecuteQueryAsync(
-                query,
-                queryParams,
-                queryParamsRegex,
-                closeConnectionOnExit,
-                CancellationToken.None)
-                .ToBlockingEnumerable();
-        }
-
-        public static void ExecuteCommand(
-            this DbCommand dbc,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            bool closeConnectionOnExit = false)
-        {
-            dbc.ExecuteCommandAsync(
-                query,
-                queryParams,
-                queryParamsRegex,
-                closeConnectionOnExit,
-                CancellationToken.None)
-                .GetAwaiter().GetResult();
-        }
-
-        public static IEnumerable<T> ExecuteQuery<T>(
-            this DbCommand dbc,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            bool closeConnectionOnExit = false)
-        {
-            return dbc.ExecuteQueryAsync<T>(
-                query,
-                queryParams,
-                queryParamsRegex,
-                closeConnectionOnExit,
-                CancellationToken.None)
-                .ToBlockingEnumerable();
-        }
-
-        #endregion
-
-        #region DbConnection
-        public static IEnumerable<dynamic> ExecuteQuery(
-            this DbConnection con,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            int? commandTimeout = null,
-            bool closeConnectionOnExit = false)
-        {
-            return con.ExecuteQueryAsync(
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                CancellationToken.None
-                )
-                .ToBlockingEnumerable();
-        }
-
-
-        public static void ExecuteCommand(
-            this DbConnection con,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            int? commandTimeout = null,
-            bool closeConnectionOnExit = false)
-        {
-            con.ExecuteCommandAsync(
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                CancellationToken.None
-                )
-                .GetAwaiter().GetResult();
-        }
-
-        public static IEnumerable<T> ExecuteQuery<T>(
-            this DbConnection con,
-            string query,
-            object? queryParams = null,
-            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
-            int? commandTimeout = null,
-            bool closeConnectionOnExit = false)
-        {
-            return con.ExecuteQueryAsync<T>(
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                CancellationToken.None)
-                .ToBlockingEnumerable();
-        }
-        #endregion
-
-        #region connection string
-        public static IEnumerable<dynamic> ExecuteQuery(
+        /// <summary>
+        /// Executes a query and returns a sync result with automatic resource management.
+        /// Can be used directly where IEnumerable&lt;dynamic&gt; is expected.
+        /// Must be disposed (use 'using' statement). Connection will be automatically closed when disposed.
+        /// </summary>
+        public static DbQueryResult<dynamic> ExecuteQuery(
             this string connectionString,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false)
+            bool closeConnectionOnExit = true, // Default to true for connection string since we're creating the connection
+            CancellationToken cToken = default
+            )
         {
-            return connectionString.ExecuteQueryAsync(
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                CancellationToken.None)
-                .ToBlockingEnumerable();
+            var asyncResult = ExecuteQueryAsync(connectionString, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
+            
+            return new DbQueryResult<dynamic>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
+
+        public static async Task ExecuteCommandAsync(
+            this string connectionString,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = true,
+            CancellationToken cToken = default
+            )
+        {
+            using var result = await ExecuteQueryAsync(connectionString, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken);
+            await foreach (var _ in result) ; // Consume the enumerable to execute the command
+        }
+
         public static void ExecuteCommand(
             this string connectionString,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false)
+            bool closeConnectionOnExit = true,
+            CancellationToken cToken = default
+            )
         {
-            connectionString.ExecuteCommandAsync(
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                CancellationToken.None
-                )
+            ExecuteCommandAsync(connectionString, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
                 .GetAwaiter().GetResult();
         }
 
-
-
-        public static IEnumerable<T> ExecuteQuery<T>(
+        /// <summary>
+        /// Executes a query and returns an async result with typed objects and automatic resource management.
+        /// Can be used directly where IAsyncEnumerable&lt;T&gt; is expected.
+        /// Must be disposed (use 'using' statement). Connection will be automatically closed when disposed.
+        /// </summary>
+        public static async Task<DbAsyncQueryResult<T>> ExecuteQueryAsync<T>(
             this string connectionString,
             string query,
             object? queryParams = null,
             string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
             int? commandTimeout = null,
-            bool closeConnectionOnExit = false)
+            bool closeConnectionOnExit = true, // Default to true for connection string since we're creating the connection
+            CancellationToken cToken = default
+            )
         {
-            return connectionString.ExecuteQueryAsync<T>(
-                query,
-                queryParams,
-                queryParamsRegex,
-                commandTimeout,
-                closeConnectionOnExit,
-                CancellationToken.None
-                )
-                .ToBlockingEnumerable();
+            using (DbConnection con = CreateDbConnection(connectionString))
+            {
+                using (DbCommand dbc = con.CreateCommand())
+                {
+                    if (commandTimeout.HasValue)
+                        dbc.CommandTimeout = commandTimeout.Value;
+                    return await ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Executes a query and returns a sync result with typed objects and automatic resource management.
+        /// Can be used directly where IEnumerable&lt;T&gt; is expected.
+        /// Must be disposed (use 'using' statement). Connection will be automatically closed when disposed.
+        /// </summary>
+        public static DbQueryResult<T> ExecuteQuery<T>(
+            this string connectionString,
+            string query,
+            object? queryParams = null,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})",
+            int? commandTimeout = null,
+            bool closeConnectionOnExit = true, // Default to true for connection string since we're creating the connection
+            CancellationToken cToken = default
+            )
+        {
+            var asyncResult = ExecuteQueryAsync<T>(connectionString, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
+                .GetAwaiter().GetResult();
+            
+            return new DbQueryResult<T>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
 
         #endregion
 
         #endregion
+
+
+
+
+
+
+        /// <summary>
+        /// Converts dynamic async enumerable to typed async enumerable
+        /// </summary>
+        internal static async IAsyncEnumerable<T> ConvertToType<T>(IAsyncEnumerable<dynamic> source)
+        {
+            await foreach (var item in source)
+            {
+                var converted = _mapper.Map<T>(item);
+                if (converted is not null)
+                    yield return converted;
+            }
+        }
 
         #region embedded extensions imported from Com.H.x packages
 
