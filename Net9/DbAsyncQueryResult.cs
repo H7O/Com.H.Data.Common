@@ -40,6 +40,19 @@ public class DbAsyncQueryResult<T> : IAsyncEnumerable<T>, IAsyncDisposable, IDis
     public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         => _asyncEnumerable.GetAsyncEnumerator(cancellationToken);
 
+    public async ValueTask CloseReaderAsync()
+    {
+        if (_reader != null && !_reader.IsClosed)
+        {
+            await _reader.CloseAsync();
+        }
+    }
+
+    public void CloseReader()
+    {
+        CloseReaderAsync().AsTask().GetAwaiter().GetResult();
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (!_disposed)

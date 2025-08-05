@@ -92,13 +92,45 @@ namespace Com.H.Data.Common
             return destination;
         }
 
+        private static bool IsSimpleType(Type type)
+        {
+            if (type == null) return false;
+            return type.IsPrimitive ||
+                   type == typeof(string) ||
+                   type == typeof(decimal) ||
+                   type == typeof(DateTime) ||
+                   type == typeof(Guid) ||
+                   type == typeof(DateTimeOffset) ||
+                   type == typeof(TimeSpan) ||
+                   (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>) &&
+                    IsSimpleType(Nullable.GetUnderlyingType(type)!));
+        }
+
         private T? MapNormal<T>(object source)
         {
             if (source == null) return default;
 
+            if (source.GetType() == typeof(T))
+                return (T)source;
+
+            // below is not needed, as it's slower and can be handled by the IsSimpleType check
+            //if ((Nullable.GetUnderlyingType(source.GetType())?? source.GetType())
+            //        == 
+            //        (Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T)))
+            //    return (T)source;
+
+
+            // check if it's a primitive type or string, decimal, DateTime, Guid, etc..
+            if (IsSimpleType(source.GetType()))
+            {
+                Type targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+                return (T)Convert.ChangeType(source, targetType, CultureInfo.InvariantCulture);
+            }
+
+
             var srcProperties = this.GetCachedProperties(source.GetType());
             var dstProperties = this.GetCachedProperties(typeof(T));
-            // Console.WriteLine(dstProperties.Count());
+            
 
             var joined = dstProperties.LeftJoin(
                 srcProperties,

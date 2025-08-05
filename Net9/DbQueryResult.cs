@@ -25,7 +25,7 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	}
 
 	// Internal properties for accessing the reader and connection
-	internal DbDataReader? Reader => _reader;
+	public DbDataReader? Reader => _reader;
 	internal DbConnection? Connection => _connection;
 
 	/// <summary>
@@ -41,6 +41,19 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	// IEnumerable<T> implementation - allows direct use where IEnumerable<T> is expected
 	public IEnumerator<T> GetEnumerator() => _asyncEnumerable.ToBlockingEnumerable().GetEnumerator();
 	System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+	public async ValueTask CloseReaderAsync()
+	{
+		if (_reader != null && !_reader.IsClosed)
+		{
+			await _reader.CloseAsync();
+		}
+	}
+
+	public void CloseReader()
+	{
+		CloseReaderAsync().AsTask().GetAwaiter().GetResult();
+	}
 
 	public async ValueTask DisposeAsync()
 	{

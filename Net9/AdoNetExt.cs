@@ -306,6 +306,18 @@ namespace Com.H.Data.Common
 
                     ExpandoObject result = new();
 
+                    if (reader.FieldCount == 1
+                        // check if there is no column name
+                        && string.IsNullOrEmpty(reader.GetName(0)))
+
+                    {
+                        var value = reader.GetValue(0);
+                        if (value is DBNull) yield return null!;
+                        yield return value;
+
+                    }
+
+
                     foreach (var item in Enumerable.Range(0, reader.FieldCount)
                             .Select(x => new { Name = reader.GetName(x), Value = reader.GetValue(x) }))
                     {
@@ -415,7 +427,7 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            using var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+            var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
             await foreach (var _ in result) ; // Consume the enumerable to execute the command
         }
 
@@ -537,7 +549,7 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            using var result = await ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken);
+            var result = await ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken);
             await foreach (var _ in result) ; // Consume the enumerable to execute the command
         }
 
@@ -658,7 +670,7 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            using var result = await ExecuteQueryAsync(connectionString, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken);
+            var result = await ExecuteQueryAsync(connectionString, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken);
             await foreach (var _ in result) ; // Consume the enumerable to execute the command
         }
 
