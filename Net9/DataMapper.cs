@@ -82,10 +82,17 @@ namespace Com.H.Data.Common
             {
                 try
                 {
-                    item.dst.Info.SetValue(destination,
-                        Convert.ChangeType(item.src.Value,
-                        item.dst.Info.PropertyType, CultureInfo.InvariantCulture)
-                    );
+                    if (item.src.Value == null)
+                    {
+                        item.dst.Info.SetValue(destination, null);
+                    }
+                    else
+                    {
+                        Type targetType = Nullable.GetUnderlyingType(item.dst.Info.PropertyType) ?? item.dst.Info.PropertyType;
+                        item.dst.Info.SetValue(destination,
+                            Convert.ChangeType(item.src.Value, targetType, CultureInfo.InvariantCulture)
+                        );
+                    }
                 }
                 catch { }
             }
@@ -130,7 +137,7 @@ namespace Com.H.Data.Common
 
             var srcProperties = this.GetCachedProperties(source.GetType());
             var dstProperties = this.GetCachedProperties(typeof(T));
-            
+
 
             var joined = dstProperties.LeftJoin(
                 srcProperties,
@@ -150,10 +157,10 @@ namespace Com.H.Data.Common
                     // Console.WriteLine($"src: {item.src.Name} = {item.src.Info?.GetValue(source)}");
                     var val = item.src.Info.GetValue(source);
 
-                    if (val is null) continue; 
+                    if (val is null) continue;
                     if (item.src.Info.PropertyType == item.dst.Info.PropertyType)
                         item.dst.Info.SetValue(destination, val);
-                    else 
+                    else
                         item.dst.Info.SetValue(destination,
                             Convert.ChangeType(val,
                             item.dst.Info.PropertyType, CultureInfo.InvariantCulture)
@@ -171,7 +178,7 @@ namespace Com.H.Data.Common
 
 
         public T? Clone<T>(T source)
-            => source is null?default:this.Map<T>(source);
+            => source is null ? default : this.Map<T>(source);
 
 
         public void FillWith(
@@ -204,12 +211,25 @@ namespace Com.H.Data.Common
             {
                 try
                 {
-                    item.dst.Info.SetValue(destination,
-                        item.src.Info == null ? null
-                        :
-                        Convert.ChangeType(item.src.Info.GetValue(source),
-                        item.dst.Info.PropertyType, CultureInfo.InvariantCulture)
-                    );
+                    if (item.src.Info == null)
+                    {
+                        item.dst.Info.SetValue(destination, null);
+                    }
+                    else
+                    {
+                        var sourceValue = item.src.Info.GetValue(source);
+                        if (sourceValue == null)
+                        {
+                            item.dst.Info.SetValue(destination, null);
+                        }
+                        else
+                        {
+                            Type targetType = Nullable.GetUnderlyingType(item.dst.Info.PropertyType) ?? item.dst.Info.PropertyType;
+                            item.dst.Info.SetValue(destination,
+                                Convert.ChangeType(sourceValue, targetType, CultureInfo.InvariantCulture)
+                            );
+                        }
+                    }
                 }
                 catch { }
             }

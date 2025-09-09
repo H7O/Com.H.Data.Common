@@ -7,7 +7,7 @@
     <AssemblyName>Com.H.Data.Common</AssemblyName>
     <RootNamespace>Com.H.Data.Common</RootNamespace>
     <ApplicationIcon>128x128.ico</ApplicationIcon>
-    <Version>9.0.1.2</Version>
+    <Version>9.0.1.3</Version>
     <Authors>Hussein Al Bayati</Authors>
     <Description>Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that return dynamic data results `IEnumerable&lt;dynamic&gt;` or `IAsyncEnumerable&lt;dynamic&gt;`.</Description>
     <Copyright>Hussein Al Bayati</Copyright>
