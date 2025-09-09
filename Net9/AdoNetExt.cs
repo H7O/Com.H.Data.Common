@@ -180,7 +180,7 @@ namespace Com.H.Data.Common
         internal static async Task<DbAsyncQueryResult<dynamic>> ExecuteQueryAsyncMain(
         this DbCommand dbc,
         string query,
-        IEnumerable<QueryParams>? queryParamList = null,
+        IEnumerable<DbQueryParams>? queryParamList = null,
         bool closeConnectionOnExit = false,
         CancellationToken cToken = default
         )
@@ -381,9 +381,9 @@ namespace Com.H.Data.Common
         {
             if (queryParams is not null)
             {
-                if (queryParams is not IEnumerable<QueryParams>)
+                if (queryParams is not IEnumerable<DbQueryParams>)
                 {
-                    queryParams = new List<QueryParams>()
+                    queryParams = new List<DbQueryParams>()
                     {
                         new()
                         {
@@ -395,7 +395,7 @@ namespace Com.H.Data.Common
             }
 
             return await ExecuteQueryAsyncMain(
-                dbc, query, (IEnumerable<QueryParams>?)queryParams, closeConnectionOnExit, cToken);
+                dbc, query, (IEnumerable<DbQueryParams>?)queryParams, closeConnectionOnExit, cToken);
         }
 
         /// <summary>

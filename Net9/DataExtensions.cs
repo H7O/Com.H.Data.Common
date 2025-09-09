@@ -150,12 +150,12 @@ namespace Com.H.Data.Common
         /// <param name="queryParamsList"></param>
         /// <param name="reverse"></param>
         /// <returns></returns>
-        public static List<QueryParams> ReduceToUnique(
-            this IEnumerable<QueryParams> queryParamsList,
+        public static List<DbQueryParams> ReduceToUnique(
+            this IEnumerable<DbQueryParams> queryParamsList,
             bool reverse = false)
         {
             if (queryParamsList == null) return [];
-            var result = new List<QueryParams>();
+            var result = new List<DbQueryParams>();
             foreach (var group in (reverse?queryParamsList.Reverse():queryParamsList)
                 .GroupBy(x => x.QueryParamsRegex))
             {
@@ -171,7 +171,7 @@ namespace Com.H.Data.Common
                         mergedDataModels.TryAdd(dataModelItem.Key, dataModelItem.Value);
                     }
                 }
-                result.Add(new QueryParams
+                result.Add(new DbQueryParams
                 {
                     QueryParamsRegex = group.Key,
                     DataModel = mergedDataModels
