@@ -120,12 +120,6 @@ namespace Com.H.Data.Common
             if (source.GetType() == typeof(T))
                 return (T)source;
 
-            // below is not needed, as it's slower and can be handled by the IsSimpleType check
-            //if ((Nullable.GetUnderlyingType(source.GetType())?? source.GetType())
-            //        == 
-            //        (Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T)))
-            //    return (T)source;
-
 
             // check if it's a primitive type or string, decimal, DateTime, Guid, etc..
             if (IsSimpleType(source.GetType()))
@@ -161,17 +155,16 @@ namespace Com.H.Data.Common
                     if (item.src.Info.PropertyType == item.dst.Info.PropertyType)
                         item.dst.Info.SetValue(destination, val);
                     else
+                    {
+                        Type targetType = Nullable.GetUnderlyingType(item.dst.Info.PropertyType) 
+                            ?? item.dst.Info.PropertyType;
                         item.dst.Info.SetValue(destination,
                             Convert.ChangeType(val,
-                            item.dst.Info.PropertyType, CultureInfo.InvariantCulture)
+                            targetType, CultureInfo.InvariantCulture)
                         );
-                    // Console.WriteLine($"dst: {item.dst.Name} = {item.dst.Info?.GetValue(source)}");
-
+                    }
                 }
-                catch // (Exception ex) 
-                {
-                    // Console.WriteLine("DataMapper: " + ex.Message);
-                }
+                catch {}
             }
             return destination;
         }
