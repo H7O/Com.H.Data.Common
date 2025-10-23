@@ -239,6 +239,7 @@ namespace Com.H.Data.Common
             // Process parameters
             if (queryParamList is not null)
             {
+                var nullParams = new List<(string varName, string sqlParamName)>();
                 int count = 0;
                 foreach (var queryParam in queryParamList.ReduceToUnique(true))
                 {
@@ -256,6 +257,8 @@ namespace Com.H.Data.Common
                         .Where(x => !string.IsNullOrEmpty(x.Name))
                         .Distinct().ToList();
 
+                    
+
                     foreach (var matchingQueryVar in matchingQueryVars)
                     {
                         object? matchingDataModelPropertyValue = null;
@@ -264,6 +267,12 @@ namespace Com.H.Data.Common
                         var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", DefaultParameterPrefix)
                             .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
                             .Replace("{{ParameterName}}", _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_"));
+
+                        if (matchingDataModelPropertyValue is null)
+                        {
+                            nullParams.Add((matchingQueryVar.OpenMarker + matchingQueryVar.Name + matchingQueryVar.CloseMarker, sqlParamName));
+                            continue;
+                        }
 
                         query = query.Replace(
                                     matchingQueryVar.OpenMarker
@@ -278,7 +287,22 @@ namespace Com.H.Data.Common
                         p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
                         command.Parameters.Add(p);
                     }
+
                 }
+
+                foreach (var nullParam in nullParams)
+                {
+                    query = query.Replace(
+                                nullParam.varName
+                                , nullParam.sqlParamName,
+                                StringComparison.OrdinalIgnoreCase
+                                );
+                    var p = command.CreateParameter();
+                    p.ParameterName = nullParam.sqlParamName;
+                    p.Value = DBNull.Value;
+                    command.Parameters.Add(p);
+                }
+
             }
 
             command.CommandText = query;
