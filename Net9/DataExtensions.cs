@@ -11,7 +11,7 @@ namespace Com.H.Data.Common
 
     public static class DataExtensions
     {
-        private static readonly JsonDocumentOptions _jsonOptions = new() { MaxDepth = 1 };
+        private static readonly JsonDocumentOptions _jsonOptions = new() { MaxDepth = 64 }; // Increased from 1 to handle nested structures
         public static IDictionary<string, object>? GetDataModelParameters(this object dataModel, bool descending = false)
         {
             if (dataModel == null) return null;
@@ -82,6 +82,11 @@ namespace Com.H.Data.Common
                                     result[x.Name] = x.Value.GetString(); break;
                                 case JsonValueKind.Null:
                                     result[x.Name] = null; break;
+                                case JsonValueKind.Array:
+                                case JsonValueKind.Object:
+                                    // For nested structures, return the raw JSON text as a string
+                                    result[x.Name] = x.Value.GetRawText();
+                                    break;
                                 default:
                                     result[x.Name] = x.Value.ToString();
                                     break;
@@ -116,6 +121,11 @@ namespace Com.H.Data.Common
                                         result[x.Name] = x.Value.GetString(); break;
                                     case JsonValueKind.Null:
                                         result[x.Name] = null; break;
+                                    case JsonValueKind.Array:
+                                    case JsonValueKind.Object:
+                                        // For nested structures, return the raw JSON text as a string
+                                        result[x.Name] = x.Value.GetRawText();
+                                        break;
                                     default:
                                         result[x.Name] = x.Value.ToString();
                                         break;
@@ -156,7 +166,7 @@ namespace Com.H.Data.Common
         {
             if (queryParamsList == null) return [];
             var result = new List<DbQueryParams>();
-            foreach (var group in (reverse?queryParamsList.Reverse():queryParamsList)
+            foreach (var group in (reverse ? queryParamsList.Reverse() : queryParamsList)
                 .GroupBy(x => x.QueryParamsRegex))
             {
                 var mergedDataModels = new Dictionary<string, object>();
