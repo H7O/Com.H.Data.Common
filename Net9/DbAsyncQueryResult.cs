@@ -50,21 +50,26 @@ public class DbAsyncQueryResult<T> : IAsyncEnumerable<T>, IAsyncDisposable, IDis
 
     public void CloseReader()
     {
-        CloseReaderAsync().AsTask().GetAwaiter().GetResult();
+        if (_reader != null && !_reader.IsClosed)
+        {
+            _reader.Close();
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         if (!_disposed)
         {
-            if (_reader != null && !_reader.IsClosed)
+            // Dispose reader (which also closes it and releases all resources)
+            if (_reader != null)
             {
-                await _reader.CloseAsync();
+                await _reader.DisposeAsync();
             }
 
+            // Dispose connection if we own it
             if (_closeConnectionOnDispose && _connection != null)
             {
-                await _connection.EnsureClosedAsync();
+                await _connection.DisposeAsync();
             }
 
             _disposed = true;
@@ -73,6 +78,17 @@ public class DbAsyncQueryResult<T> : IAsyncEnumerable<T>, IAsyncDisposable, IDis
 
     public void Dispose()
     {
-        DisposeAsync().AsTask().GetAwaiter().GetResult();
+        if (!_disposed)
+        {
+            // Use synchronous disposal to avoid GetAwaiter().GetResult() deadlock issues
+            _reader?.Dispose();
+
+            if (_closeConnectionOnDispose && _connection != null)
+            {
+                _connection.Dispose();
+            }
+
+            _disposed = true;
+        }
     }
 }
