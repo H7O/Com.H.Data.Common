@@ -14,7 +14,7 @@ namespace Com.H.Data.Common
     public static class AdoNetExt
     {
         public static string DefaultParameterPrefix { get; set; } = "@";
-        public static string DefaultParameterTemplate { get;set; } = "{{DefaultParameterPrefix}}vxv_{{ParameterCount}}_{{ParameterName}}";
+        public static string DefaultParameterTemplate { get; set; } = "{{DefaultParameterPrefix}}vxv_{{ParameterCount}}_{{ParameterName}}";
 
         private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
         private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -32,7 +32,7 @@ namespace Com.H.Data.Common
                 defaultDataTypeRegexCompiled = null!;
             }
         }
-                
+
 
         private static Regex defaultDataTypeRegexCompiled = null!;
 
@@ -172,7 +172,7 @@ namespace Com.H.Data.Common
         #region implementation
 
         #region main implementation
-        
+
         /// <summary>
         /// Main implementation that executes queries and returns resource-safe DbAsyncQueryResult.
         /// This is the core method used by all ExecuteQueryAsync extension methods.
@@ -202,7 +202,7 @@ namespace Com.H.Data.Common
                 })
                 .Where(x => !string.IsNullOrEmpty(x.ParamName)
                     && !string.IsNullOrEmpty(x.Type));
-            
+
             bool hasDataTypes = dataTypeList.Any();
 
             Dictionary<string, dynamic> dataTypeDict = null!;
@@ -232,7 +232,7 @@ namespace Com.H.Data.Common
 
             DbDataReader reader;
             DbCommand command = dbc;
-            
+
             await conn.EnsureOpenAsync(cToken);
             cToken.ThrowIfCancellationRequested();
 
@@ -257,7 +257,7 @@ namespace Com.H.Data.Common
                         .Where(x => !string.IsNullOrEmpty(x.Name))
                         .Distinct().ToList();
 
-                    
+
 
                     foreach (var matchingQueryVar in matchingQueryVars)
                     {
@@ -314,8 +314,8 @@ namespace Com.H.Data.Common
         }
 
         internal static async IAsyncEnumerable<dynamic> CreateAsyncEnumerableFromReader(
-            DbDataReader reader, 
-            bool hasDataTypes, 
+            DbDataReader reader,
+            bool hasDataTypes,
             Dictionary<string, dynamic>? dataTypeDict,
             [EnumeratorCancellation] CancellationToken cToken = default)
         {
@@ -352,20 +352,20 @@ namespace Com.H.Data.Common
                         }
                         else
                         {
-                            if (hasDataTypes 
+                            if (hasDataTypes
                                 && dataTypeDict != null
                                 && dataTypeDict.TryGetValue(item.Name, out dynamic? value)
                                 && !string.IsNullOrEmpty(item.Value as string)
                                 )
                             {
-                                
+
                                 switch (value.Type)
                                 {
                                     case "json":
                                         result.TryAdd(item.Name, (object)(item.Value as string)!.ParseJson());
                                         break;
                                     case "xml":
-                                        result.TryAdd(item.Name, (object) (item.Value as string)!.ParseXml());
+                                        result.TryAdd(item.Name, (object)(item.Value as string)!.ParseXml());
                                         break;
                                     default:
                                         result.TryAdd(item.Name, item.Value);
@@ -438,7 +438,7 @@ namespace Com.H.Data.Common
         {
             var asyncResult = ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken)
                 .GetAwaiter().GetResult();
-            
+
             return new DbQueryResult<dynamic>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
 
@@ -484,7 +484,7 @@ namespace Com.H.Data.Common
         {
             var dynamicResult = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
             var typedAsyncEnumerable = ConvertToType<T>(dynamicResult.AsAsyncEnumerable());
-            
+
             return new DbAsyncQueryResult<T>(
                 typedAsyncEnumerable,
                 dynamicResult.Reader,
@@ -509,7 +509,7 @@ namespace Com.H.Data.Common
         {
             var asyncResult = ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken)
                 .GetAwaiter().GetResult();
-            
+
             return new DbQueryResult<T>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
 
@@ -559,7 +559,7 @@ namespace Com.H.Data.Common
         {
             var asyncResult = ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
                 .GetAwaiter().GetResult();
-            
+
             return new DbQueryResult<dynamic>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
 
@@ -630,15 +630,14 @@ namespace Com.H.Data.Common
         {
             var asyncResult = ExecuteQueryAsync<T>(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
                 .GetAwaiter().GetResult();
-            
+
             return new DbQueryResult<T>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
         }
         #endregion
 
-        
+
 
         #endregion
-
 
 
 
