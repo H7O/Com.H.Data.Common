@@ -508,7 +508,9 @@ namespace YourApi.Controllers
 ## Sample 7
 This sample demonstrates how to dynamically load multiple configuration files based on settings, allowing you to maintain a modular configuration structure.
 
-First, create a main configuration file `appsettings.json`:
+First, create a `config` folder in your project root to organize your configuration files. This keeps your project structure clean and separates queries from application code.
+
+Then, create your `appsettings.json`:
 
 ```json
 {
@@ -526,20 +528,6 @@ First, create a main configuration file `appsettings.json`:
 }
 ```
 
-Or use an XML settings file `config/settings.xml`:
-
-```xml
-<?xml version="1.0" encoding="utf-8" ?>
-<settings>
-  <additional_configurations>
-    <path>config/users_queries.xml</path>
-    <path>config/orders_queries.xml</path>
-    <path>config/reports_queries.xml</path>
-    <path>config/custom_settings.json</path>
-  </additional_configurations>
-</settings>
-```
-
 Configure your `Program.cs` to dynamically load all configuration files:
 
 ```csharp
@@ -548,13 +536,8 @@ using System.Data.Common;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Load the main settings file first
-builder.Configuration
-    .SetBasePath(AppContext.BaseDirectory)
-    .AddXmlFile("config/settings.xml", optional: false, reloadOnChange: true);
-
-// Dynamically load additional configuration files specified in settings
-var additionalConfigsSection = builder.Configuration.GetSection("additional_configurations:path");
+// Dynamically load additional configuration files specified in appsettings.json
+var additionalConfigsSection = builder.Configuration.GetSection("AdditionalConfigurations:Paths");
 if (additionalConfigsSection.Exists())
 {
     var additionalConfigPaths = additionalConfigsSection.Get<List<string>>();
@@ -597,11 +580,12 @@ app.Run();
 
 > **Note**: 
 > - This pattern allows you to maintain a master configuration file that references other configuration files
-> - You can add or remove query files by simply updating the `appsettings.json` or `settings.xml` without changing code
+> - You can add or remove query files by simply updating the `appsettings.json` without changing code
 > - All dynamically loaded files support `reloadOnChange: true`, so changes to any file are picked up automatically
 > - This is especially useful for large applications where different teams maintain different query sets
 > - You can mix XML and JSON files based on your needs (remember: XML with CDATA is better for SQL queries)
-> - Consider organizing files by feature or domain (e.g., `users_queries.xml`, `inventory_queries.xml`, `analytics_queries.xml`)
+> - Consider organizing files by feature or domain (e.g., `config/users_queries.xml`, `config/inventory_queries.xml`, `config/analytics_queries.xml`)
+> - **Don't forget** to set the "Copy to Output Directory" property to "Copy if newer" or "Copy always" for all files in the `config` folder
 
 
 ## What other databases this library supports?
