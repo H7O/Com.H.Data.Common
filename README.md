@@ -338,7 +338,7 @@ namespace YourApi.Controllers
 >   - Using connection pooling (enabled by default in most ADO.NET providers)
 
 
-```
+
 
 ## Sample 6
 This sample demonstrates how to externalize your SQL queries in a configuration file, allowing you to modify queries without recompiling your application.
