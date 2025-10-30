@@ -19,15 +19,18 @@ using System.Data.Common;
 using Microsoft.Data.SqlClient;
 
 string conStr = @"connection string goes here";
-DbConnection dc = new SqlConnection(conStr);
+using DbConnection dc = new SqlConnection(conStr);
 // ^ note the use of DbConnection instead of SqlConnection. The extension methods 
 // are defined on DbConnection
+// Also note the use of 'using' keyword to ensure proper disposal of the connection
 
-var result = dc.ExecuteQuery("select 'John' as name, '123' as phone");
-// ^ returns IEnumerable<dynamic>, you can also return IEnumerable<T> where T is your data model class by using the ExecuteQuery<T> method.
+using var result = dc.ExecuteQuery("select 'John' as name, '123' as phone");
+// ^ returns DbQueryResult<dynamic> which implements IEnumerable<dynamic> and IDisposable
+// You can also return DbQueryResult<T> where T is your data model class by using the ExecuteQuery<T> method.
+// The 'using' keyword ensures proper disposal of database resources (reader and optionally connection)
 
-// Example: var result = dc.ExecuteQuery<YourDataModelClass>("select 'John' as name, '123' as phone");
-// Also, returns IAsyncEnumerable when called asynchronously via dc.ExecuteQueryAsync() 
+// Example: using var result = dc.ExecuteQuery<YourDataModelClass>("select 'John' as name, '123' as phone");
+// Also, returns DbAsyncQueryResult<dynamic> when called asynchronously via dc.ExecuteQueryAsync() 
 // or dc.ExecuteQueryAsync<T>()
 // And for executing a command that does not return any data, you can use the ExecuteCommand() 
 // or ExecuteCommandAsync() methods
@@ -38,8 +41,9 @@ foreach (var item in result)
     System.Console.WriteLine($"name = {item.name}, phone = {item.phone}");
 }
 ```
-> **Note**: The returned IEnumerable (whether `IEnumerable<dynamic>` or `IEnumerable<T>`) is an an IEnumerable derived class that implements the `IEnumerable<T>` interface, which means you can use it anywhere    `IEnumerable<T>` is expected.<br/>
-For example, you can use it in a foreach loop, or pass it to LINQ methods like Where, Select, etc.
+> **Note**: The returned DbQueryResult (whether `DbQueryResult<dynamic>` or `DbQueryResult<T>`) implements the `IEnumerable<T>` interface and `IDisposable` interface, which means you can use it anywhere `IEnumerable<T>` is expected and should be disposed properly using the `using` keyword.<br/>
+For example, you can use it in a foreach loop, or pass it to LINQ methods like Where, Select, etc.<br/>
+The asynchronous version returns `DbAsyncQueryResult<T>` which implements `IAsyncEnumerable<T>` and `IAsyncDisposable`.
 
 
 ## Sample 2
@@ -51,7 +55,8 @@ using System.Data.Common;
 using Microsoft.Data.SqlClient;
 
 string conStr = @"your connection string goes here";
-DbConnection dc = new SqlConnection(conStr);
+using DbConnection dc = new SqlConnection(conStr);
+// ^ note the use of 'using' keyword to ensure proper disposal of the connection
 
 var queryParams = new { name = "Jane" };
 // ^ queryParams could be an anonymous object (similar to the example above)
@@ -67,7 +72,7 @@ var queryParams = new { name = "Jane" };
 // Example 4: var queryParams = System.Text.Json.JsonDocument.Parse("{\"name\":\"John\"}").RootElement
 
 
-var result = dc.ExecuteQuery(@"
+using var result = dc.ExecuteQuery(@"
 	select * from (values 
 		('John', '55555'), 
 		('Jane', '44444')) as t (name, phone)
@@ -78,6 +83,7 @@ var result = dc.ExecuteQuery(@"
 // The parameter name must match the property name in the queryParams object.
 // It also protects you from SQL injection attacks and is configurable to use other 
 // delimiters by passing a regular expression 
+// Also note the use of 'using' keyword to ensure proper disposal of database resources
 
  
 // Example 1: using `[[` and `]]` instead of `{{` and `}}` dc.ExecuteQuery(@"
@@ -107,16 +113,18 @@ using System.Data.Common;
 using Microsoft.Data.SqlClient;
 
 string conStr = @"your connection string goes here";
-DbConnection dc = new SqlConnection(conStr);
+using DbConnection dc = new SqlConnection(conStr);
+// ^ note the use of 'using' keyword to ensure proper disposal of the connection
 
 
-var result = dc.ExecuteQuery(@"
+using var result = dc.ExecuteQuery(@"
 SELECT 
     'John' as [name],
     (select * from (values 
 		('55555', 'Mobile'), 
 		('44444', 'Work')) 
         as t (number, [type]) for json path) AS {type{json{phones}}}");
+// ^ note the use of 'using' keyword to ensure proper disposal of database resources
 
 foreach (var person in result)
 {
@@ -163,14 +171,16 @@ using Microsoft.Data.SqlClient;
 using System.Linq;
 
 string conStr = @"your connection string goes here";
-DbConnection dc = new SqlConnection(conStr);
+using DbConnection dc = new SqlConnection(conStr);
+// ^ note the use of 'using' keyword to ensure proper disposal of the connection
 
-var result = dc.ExecuteQuery("SELECT * FROM Users");
+using var result = dc.ExecuteQuery("SELECT * FROM Users");
 var firstUser = result.FirstOrDefault();
 
 result.Dispose(); // Closes any open reader on `dc`
 
-var anotherResult = dc.ExecuteQuery("SELECT * FROM Orders"); // Safe! No reader exception from previous query
+using var anotherResult = dc.ExecuteQuery("SELECT * FROM Orders"); // Safe! No reader exception from previous query
+// ^ note the use of 'using' keyword to ensure proper disposal of database resources
 ```
 
 
