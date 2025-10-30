@@ -183,6 +183,160 @@ using var anotherResult = dc.ExecuteQuery("SELECT * FROM Orders"); // Safe! No r
 // ^ note the use of 'using' keyword to ensure proper disposal of database resources
 ```
 
+## Sample 5
+This sample demonstrates how to use the library in an ASP.NET Core Web API controller with dependency injection.
+
+**Key Benefits**: 
+- **No DTOs needed**: Work directly with dynamic query results without creating DTOs (Data Transfer Objects) or entity classes. This eliminates boilerplate code and allows you to focus on your business logic rather than maintaining mapping classes.
+- **Externalize queries**: Store your SQL queries in external files, allowing you to modify business logic and data retrieval without recompiling your application. This is especially useful for rapid iteration and production hotfixes.
+
+First, register the `DbConnection` in your `Program.cs`:
+
+```csharp
+using Microsoft.Data.SqlClient;
+using System.Data.Common;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Register DbConnection as scoped (new connection per request)
+builder.Services.AddScoped<DbConnection>(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var connectionString = configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Connection string not found");
+    return new SqlConnection(connectionString);
+});
+
+builder.Services.AddControllers();
+
+var app = builder.Build();
+app.MapControllers();
+app.Run();
+```
+
+Then use it in your controller:
+
+```csharp
+using Com.H.Data.Common;
+using Microsoft.AspNetCore.Mvc;
+using System.Data.Common;
+using System.Text.Json;
+
+namespace YourApi.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class UsersController : ControllerBase
+    {
+        private readonly DbConnection _connection;
+
+        public UsersController(DbConnection connection)
+        {
+            _connection = connection;
+        }
+
+        // GET: api/users
+        [HttpGet]
+        public async Task<IActionResult> GetAllUsers()
+        {
+            // ExecuteQueryAsync returns DbAsyncQueryResult which implements IAsyncEnumerable
+            // Register it for disposal when the request completes
+            var result = await _connection.ExecuteQueryAsync("SELECT id, name, email FROM Users");
+            HttpContext.Response.RegisterForDisposeAsync(result);
+            
+            // Return the result directly - ASP.NET Core will stream it as JSON
+            return Ok(result);
+        }
+
+        // GET: api/users/{id}
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetUserById(int id)
+        {
+            var queryParams = new { id };
+            await using var result = await _connection.ExecuteQueryAsync(
+                "SELECT id, name, email FROM Users WHERE id = {{id}}", 
+                queryParams);
+            
+            var user = await result.FirstOrDefaultAsync();
+            
+            if (user == null)
+                return NotFound();
+                
+            return Ok(user);
+        }
+
+        // POST: api/users/search
+        [HttpPost("search")]
+        public async Task<IActionResult> SearchUsers([FromBody] JsonElement searchParams)
+        {
+            // JsonElement can be passed directly as query parameters
+            // Client can send: { "name": "John", "minAge": 25 }
+            var result = await _connection.ExecuteQueryAsync(@"
+                SELECT id, name, email, age 
+                FROM Users 
+                WHERE name LIKE '%' + {{name}} + '%' 
+                AND age >= {{minAge}}", 
+                searchParams);
+            
+            // Register for disposal when the request completes
+            HttpContext.Response.RegisterForDisposeAsync(result);
+            
+            // Return the result directly - it will be streamed to the client
+            return Ok(result);
+        }
+
+        // POST: api/users
+        [HttpPost]
+        public async Task<IActionResult> CreateUser([FromBody] JsonElement userData)
+        {
+            // For insert/update/delete operations, use ExecuteCommandAsync
+            await _connection.ExecuteCommandAsync(@"
+                INSERT INTO Users (name, email, age) 
+                VALUES ({{name}}, {{email}}, {{age}})", 
+                userData);
+            
+            return Ok(new { message = "User created successfully" });
+        }
+
+        // GET: api/users/{id}/orders
+        // Example with nested JSON data
+        [HttpGet("{id}/orders")]
+        public async Task<IActionResult> GetUserWithOrders(int id)
+        {
+            var queryParams = new { userId = id };
+            await using var result = await _connection.ExecuteQueryAsync(@"
+                SELECT 
+                    u.id,
+                    u.name,
+                    u.email,
+                    (SELECT o.orderId, o.orderDate, o.total 
+                     FROM Orders o 
+                     WHERE o.userId = u.id 
+                     FOR JSON PATH) AS {type{json{orders}}}
+                FROM Users u
+                WHERE u.id = {{userId}}", 
+                queryParams);
+            
+            var user = await result.FirstOrDefaultAsync();
+            
+            if (user == null)
+                return NotFound();
+                
+            return Ok(user);
+        }
+    }
+}
+```
+
+> **Note**: 
+> - The `DbConnection` is registered as **scoped**, meaning a new connection is created per HTTP request and automatically disposed when the request completes
+> - You don't need to manually dispose the connection - ASP.NET Core's DI container handles that
+> - For production environments, also consider:
+>   - Implementing proper error handling and logging
+>   - Adding authentication and authorization
+>   - Implementing request validation
+>   - Using connection pooling (enabled by default in most ADO.NET providers)
+
 
 ## What other databases this library supports?
 Any ADO.NET provider that implements DbConnection and DbCommand classes should work with this library.
