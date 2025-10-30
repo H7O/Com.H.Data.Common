@@ -343,6 +343,11 @@ namespace YourApi.Controllers
 ## Sample 6
 This sample demonstrates how to externalize your SQL queries in a configuration file, allowing you to modify queries without recompiling your application.
 
+> **Note**: To use XML configuration files, you'll need to install the `Microsoft.Extensions.Configuration.Xml` NuGet package:
+> ```
+> dotnet add package Microsoft.Extensions.Configuration.Xml
+> ```
+
 First, create an XML file named `queries.xml` in your project root:
 
 ```xml
