@@ -338,6 +338,273 @@ namespace YourApi.Controllers
 >   - Using connection pooling (enabled by default in most ADO.NET providers)
 
 
+```
+
+## Sample 6
+This sample demonstrates how to externalize your SQL queries in a configuration file, allowing you to modify queries without recompiling your application.
+
+First, create an XML file named `queries.xml` in your project root:
+
+```xml
+<?xml version="1.0" encoding="utf-8" ?>
+<settings>
+  <queries>
+    
+    <!-- Get all users -->
+    <get_all_users>
+    <![CDATA[
+      SELECT id, name, email, createdDate 
+      FROM Users 
+      ORDER BY createdDate DESC
+    ]]>
+    </get_all_users>
+    
+    <!-- Search users by name and age -->
+    <search_users>
+    <![CDATA[
+      SELECT id, name, email, age 
+      FROM Users 
+      WHERE name LIKE '%' + {{name}} + '%' 
+      AND age >= {{minAge}}
+      ORDER BY name
+    ]]>
+    </search_users>
+    
+    <!-- Get user with orders (nested JSON) -->
+    <get_user_with_orders>
+    <![CDATA[
+      SELECT 
+          u.id,
+          u.name,
+          u.email,
+          (SELECT o.orderId, o.orderDate, o.total 
+           FROM Orders o 
+           WHERE o.userId = u.id 
+           FOR JSON PATH) AS {type{json{orders}}}
+      FROM Users u
+      WHERE u.id = {{userId}}
+    ]]>
+    </get_user_with_orders>
+    
+  </queries>
+</settings>
+```
+
+Configure your `Program.cs` to load the queries file with hot-reload support:
+
+```csharp
+using Microsoft.Data.SqlClient;
+using System.Data.Common;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Load queries from external XML file with hot-reload enabled
+builder.Configuration
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddXmlFile("queries.xml", optional: false, reloadOnChange: true);
+
+// Register DbConnection as scoped
+builder.Services.AddScoped<DbConnection>(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var connectionString = configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Connection string not found");
+    return new SqlConnection(connectionString);
+});
+
+builder.Services.AddControllers();
+
+var app = builder.Build();
+app.MapControllers();
+app.Run();
+```
+
+Now use the queries in your controller:
+
+```csharp
+using Com.H.Data.Common;
+using Microsoft.AspNetCore.Mvc;
+using System.Data.Common;
+using System.Text.Json;
+
+namespace YourApi.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class UsersController : ControllerBase
+    {
+        private readonly DbConnection _connection;
+        private readonly IConfiguration _configuration;
+
+        public UsersController(DbConnection connection, IConfiguration configuration)
+        {
+            _connection = connection;
+            _configuration = configuration;
+        }
+
+        // GET: api/users
+        [HttpGet]
+        public async Task<IActionResult> GetAllUsers()
+        {
+            // Load query from configuration file
+            var query = _configuration["queries:get_all_users"] 
+                ?? throw new InvalidOperationException("Query 'get_all_users' not found");
+            
+            var result = await _connection.ExecuteQueryAsync(query);
+            HttpContext.Response.RegisterForDisposeAsync(result);
+            
+            return Ok(result);
+        }
+
+        // POST: api/users/search
+        [HttpPost("search")]
+        public async Task<IActionResult> SearchUsers([FromBody] JsonElement searchParams)
+        {
+            // Load query from configuration file
+            var query = _configuration["queries:search_users"]
+                ?? throw new InvalidOperationException("Query 'search_users' not found");
+            
+            var result = await _connection.ExecuteQueryAsync(query, searchParams);
+            HttpContext.Response.RegisterForDisposeAsync(result);
+            
+            return Ok(result);
+        }
+
+        // GET: api/users/{id}/orders
+        [HttpGet("{id}/orders")]
+        public async Task<IActionResult> GetUserWithOrders(int id)
+        {
+            // Load query from configuration file
+            var query = _configuration["queries:get_user_with_orders"]
+                ?? throw new InvalidOperationException("Query 'get_user_with_orders' not found");
+            
+            var queryParams = new { userId = id };
+            await using var result = await _connection.ExecuteQueryAsync(query, queryParams);
+            
+            var user = await result.FirstOrDefaultAsync();
+            
+            if (user == null)
+                return NotFound();
+                
+            return Ok(user);
+        }
+    }
+}
+```
+
+> **Note**: 
+> - With `reloadOnChange: true`, you can modify queries in the `queries.xml` file and the changes will be picked up automatically without restarting the application
+> - This is extremely useful for production hotfixes, query optimization, and rapid iteration
+> - Make sure to set the XML file's "Copy to Output Directory" property to "Copy if newer" or "Copy always" in your project settings
+> - **XML is recommended over JSON** for storing queries because XML's `CDATA` tags allow you to write queries without worrying about escaping special characters (quotes, backslashes, etc.) that would be required in JSON files
+> - You can organize queries into multiple files for better maintainability (e.g., `users_queries.xml`, `orders_queries.xml`, `reports_queries.xml`) by calling `AddXmlFile()` multiple times:
+>   ```csharp
+>   builder.Configuration
+>       .AddXmlFile("users_queries.xml", optional: false, reloadOnChange: true)
+>       .AddXmlFile("orders_queries.xml", optional: false, reloadOnChange: true)
+>       .AddXmlFile("reports_queries.xml", optional: false, reloadOnChange: true);
+>   ```
+
+
+## Sample 7
+This sample demonstrates how to dynamically load multiple configuration files based on settings, allowing you to maintain a modular configuration structure.
+
+First, create a main configuration file `appsettings.json`:
+
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=myserver;Database=mydb;User Id=myuser;Password=mypass;"
+  },
+  "AdditionalConfigurations": {
+    "Paths": [
+      "config/users_queries.xml",
+      "config/orders_queries.xml",
+      "config/reports_queries.xml",
+      "config/custom_settings.json"
+    ]
+  }
+}
+```
+
+Or use an XML settings file `config/settings.xml`:
+
+```xml
+<?xml version="1.0" encoding="utf-8" ?>
+<settings>
+  <additional_configurations>
+    <path>config/users_queries.xml</path>
+    <path>config/orders_queries.xml</path>
+    <path>config/reports_queries.xml</path>
+    <path>config/custom_settings.json</path>
+  </additional_configurations>
+</settings>
+```
+
+Configure your `Program.cs` to dynamically load all configuration files:
+
+```csharp
+using Microsoft.Data.SqlClient;
+using System.Data.Common;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Load the main settings file first
+builder.Configuration
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddXmlFile("config/settings.xml", optional: false, reloadOnChange: true);
+
+// Dynamically load additional configuration files specified in settings
+var additionalConfigsSection = builder.Configuration.GetSection("additional_configurations:path");
+if (additionalConfigsSection.Exists())
+{
+    var additionalConfigPaths = additionalConfigsSection.Get<List<string>>();
+    
+    if (additionalConfigPaths?.Any() == true)
+    {
+        foreach (var configPath in additionalConfigPaths)
+        {
+            // Determine file type by extension and load accordingly
+            var extension = Path.GetExtension(configPath);
+            
+            if (extension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.Configuration.AddXmlFile(configPath, optional: false, reloadOnChange: true);
+            }
+            else if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.Configuration.AddJsonFile(configPath, optional: false, reloadOnChange: true);
+            }
+            // Add more file types as needed (e.g., .ini, .yaml, etc.)
+        }
+    }
+}
+
+// Register DbConnection as scoped
+builder.Services.AddScoped<DbConnection>(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var connectionString = configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Connection string not found");
+    return new SqlConnection(connectionString);
+});
+
+builder.Services.AddControllers();
+
+var app = builder.Build();
+app.MapControllers();
+app.Run();
+```
+
+> **Note**: 
+> - This pattern allows you to maintain a master configuration file that references other configuration files
+> - You can add or remove query files by simply updating the `appsettings.json` or `settings.xml` without changing code
+> - All dynamically loaded files support `reloadOnChange: true`, so changes to any file are picked up automatically
+> - This is especially useful for large applications where different teams maintain different query sets
+> - You can mix XML and JSON files based on your needs (remember: XML with CDATA is better for SQL queries)
+> - Consider organizing files by feature or domain (e.g., `users_queries.xml`, `inventory_queries.xml`, `analytics_queries.xml`)
+
+
 ## What other databases this library supports?
 Any ADO.NET provider that implements DbConnection and DbCommand classes should work with this library.
 
