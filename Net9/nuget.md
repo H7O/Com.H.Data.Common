@@ -581,7 +581,8 @@ app.Run();
 > **Note**: 
 > - This pattern allows you to maintain a master configuration file that references other configuration files
 > - You can add or remove query files by simply updating the `appsettings.json` without changing code
-> - All dynamically loaded files support `reloadOnChange: true`, so changes to any file are picked up automatically
+> - **Important**: If you add new configuration files to the `AdditionalConfigurations:Paths` list, you'll need to restart the application (or recycle the app pool in IIS) for the changes to take effect, since configuration files are loaded during application startup (before the `builder.Build()` call)
+> - **However**, once files are loaded, you can freely add new queries or modify existing queries within those files without restarting - all changes are picked up automatically thanks to `reloadOnChange: true`. This means you can continuously update your queries in production without any downtime!
 > - This is especially useful for large applications where different teams maintain different query sets
 > - You can mix XML and JSON files based on your needs (remember: XML with CDATA is better for SQL queries)
 > - Consider organizing files by feature or domain (e.g., `config/users_queries.xml`, `config/inventory_queries.xml`, `config/analytics_queries.xml`)
