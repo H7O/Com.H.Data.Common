@@ -8,10 +8,36 @@ using System.Threading.Tasks;
 
 namespace Com.H.Data.Common
 {
-
+    /// <summary>
+    /// Provides extension methods for data model parameter extraction and query parameter management.
+    /// Supports multiple parameter source types including anonymous objects, dictionaries, JSON strings, and JsonElement.
+    /// </summary>
     public static class DataExtensions
     {
         private static readonly JsonDocumentOptions _jsonOptions = new() { MaxDepth = 64 }; // Increased from 1 to handle nested structures
+        
+        /// <summary>
+        /// Extracts parameters from various data model types into a dictionary.
+        /// Supports anonymous objects, dictionaries (string-object or string-string), JsonElement, JSON strings, and regular objects.
+        /// Nested JSON/XML structures are returned as raw JSON/XML text strings.
+        /// </summary>
+        /// <param name="dataModel">The data model to extract parameters from. Can be an anonymous object, Dictionary&lt;string,object&gt;, 
+        /// Dictionary&lt;string,string&gt;, JsonElement, JSON string, or any object with properties.</param>
+        /// <param name="descending">If true, later values override earlier ones when duplicate keys are encountered. Default is false.</param>
+        /// <returns>A dictionary containing parameter names as keys and their values, or null if dataModel is null</returns>
+        /// <example>
+        /// <code>
+        /// // From anonymous object
+        /// var params1 = new { name = "John", age = 30 }.GetDataModelParameters();
+        /// 
+        /// // From JsonElement
+        /// var json = JsonDocument.Parse("{\"name\":\"Jane\",\"age\":25}").RootElement;
+        /// var params2 = json.GetDataModelParameters();
+        /// 
+        /// // From JSON string
+        /// var params3 = "{\"name\":\"Bob\",\"age\":35}".GetDataModelParameters();
+        /// </code>
+        /// </example>
         public static IDictionary<string, object>? GetDataModelParameters(this object dataModel, bool descending = false)
         {
             if (dataModel == null) return null;
@@ -148,18 +174,29 @@ namespace Com.H.Data.Common
         }
 
         /// <summary>
-        /// Reduce the list to have QueryParams with unique QueryParamsRegex
-        /// and merge the DataModel of the QueryParams with the same QueryParamsRegex
-        /// reduce the list to have QueryParams with unique QueryParamsRegex
-        /// into one DataModel. The DataModel of the QueryParams with the same QueryParamsRegex
-        /// will be merged into the first QueryParams in the list.
-        /// If a DataModel has the same key as the DataModel of the first QueryParams in the list,
-        /// the value of the DataModel of the first QueryParams in the list will be replaced
-        /// by the value of the last DataModel.
+        /// Reduces a list of DbQueryParams to unique QueryParamsRegex values and merges their data models.
+        /// For QueryParams with the same regex pattern, their data models are combined into one.
+        /// When duplicate keys exist across data models with the same regex, the behavior depends on the reverse parameter.
         /// </summary>
-        /// <param name="queryParamsList"></param>
-        /// <param name="reverse"></param>
-        /// <returns></returns>
+        /// <param name="queryParamsList">The list of query parameters to reduce</param>
+        /// <param name="reverse">If true, processes in reverse order and later values override earlier ones for duplicate keys. 
+        /// If false, earlier values are preserved for duplicate keys.</param>
+        /// <returns>A list of DbQueryParams with unique regex patterns and merged data models</returns>
+        /// <example>
+        /// <code>
+        /// var params1 = new DbQueryParams { 
+        ///     QueryParamsRegex = @"\{\{.*?\}\}", 
+        ///     DataModel = new { name = "John" } 
+        /// };
+        /// var params2 = new DbQueryParams { 
+        ///     QueryParamsRegex = @"\{\{.*?\}\}", 
+        ///     DataModel = new { age = 30 } 
+        /// };
+        /// 
+        /// var merged = new[] { params1, params2 }.ReduceToUnique();
+        /// // Result: One DbQueryParams with DataModel containing both name and age
+        /// </code>
+        /// </example>
         public static List<DbQueryParams> ReduceToUnique(
             this IEnumerable<DbQueryParams> queryParamsList,
             bool reverse = false)
