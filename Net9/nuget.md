@@ -597,23 +597,32 @@ app.Run();
 ## What other databases this library supports?
 Any ADO.NET provider that implements DbConnection and DbCommand classes should work with this library.
 
-> **Note**: Be mindful of setting the correct parameter prefix for your database provider. 
+> **Note**: The library **automatically detects** the correct parameter prefix based on your database connection type:
 >
-> For example, for SQL Server, the parameter prefix is `@` and for Oracle, it is `:`. 
+> | Database Provider | Prefix | Auto-Detected |
+> |-------------------|--------|---------------|
+> | SQL Server (Microsoft.Data.SqlClient, System.Data.SqlClient) | `@` | ✅ |
+> | PostgreSQL (Npgsql) | `@` | ✅ |
+> | MySQL | `@` | ✅ |
+> | SQLite | `@` | ✅ |
+> | Oracle | `:` | ✅ |
+> | DB2 | `@` | ✅ |
+> | Firebird | `@` | ✅ |
+> | ODBC | `?` | ✅ |
+> | OleDb | `?` | ✅ |
 >
-> By default, the library uses `@` as the parameter prefix. 
-> To change that, you can change the default symbol by setting the static `DefaultParameterPrefix` property of the `Com.H.Data.Common.AdoNetExt` class.
+> **No configuration needed!** The prefix is detected from the connection type and cached for performance.
 >
-> Oracle example:
+> For unrecognized providers, the library falls back to `DefaultParameterPrefix` (defaults to `@`).
+> You can override this fallback if needed:
 > ```csharp
-> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = ":"; // for Oracle
+> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = ":"; // fallback for unknown providers
 > ```
 >
-> SQL Server example (or any other database that uses `@` as the parameter prefix like PostgreSQL, MySQL, etc):
+> You can also get the detected prefix for any connection using:
 > ```csharp
-> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = "@";
+> string prefix = Com.H.Data.Common.AdoNetExt.GetParameterPrefix(connection);
 > ```
-> Note that there is no need to set the parameter prefix for SQL Server (or any other database that uses `@` as the parameter prefix) as it is already the default set value.
 >
 
 ## What other features this library has?

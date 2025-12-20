@@ -1,4 +1,5 @@
-﻿using System.Data;
+﻿using System.Collections.Concurrent;
+using System.Data;
 using System.Data.Common;
 using System.Dynamic;
 using System.Globalization;
@@ -17,11 +18,19 @@ namespace Com.H.Data.Common
     public static class AdoNetExt
     {
         /// <summary>
-        /// Gets or sets the default parameter prefix used for database parameters.
-        /// Default is "@" for SQL Server, PostgreSQL, MySQL. Set to ":" for Oracle.
+        /// Gets or sets the default parameter prefix used as a fallback for unrecognized database providers.
         /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The library automatically detects the parameter prefix based on the <see cref="System.Data.Common.DbConnection"/> type.
+        /// This property is only used when the provider type is not recognized by <see cref="GetParameterPrefix"/>.
+        /// </para>
+        /// <para>
+        /// Default value is "@" which works for most databases (SQL Server, PostgreSQL, MySQL, SQLite, etc.).
+        /// </para>
+        /// </remarks>
         /// <example>
-        /// Oracle usage:
+        /// Override for a custom or unrecognized provider:
         /// <code>
         /// Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = ":";
         /// </code>
@@ -33,6 +42,94 @@ namespace Com.H.Data.Common
         /// Supports placeholders: {{DefaultParameterPrefix}}, {{ParameterCount}}, {{ParameterName}}.
         /// </summary>
         public static string DefaultParameterTemplate { get; set; } = "{{DefaultParameterPrefix}}vxv_{{ParameterCount}}_{{ParameterName}}";
+
+        /// <summary>
+        /// Cache for parameter prefixes by connection type.
+        /// Key is the connection Type since parameter prefix is determined by ADO.NET provider, not connection instance.
+        /// </summary>
+        private static readonly ConcurrentDictionary<Type, string> _prefixCache = new();
+
+        /// <summary>
+        /// Gets the SQL parameter prefix for the specified database connection.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The prefix is automatically detected based on the connection type and cached for performance.
+        /// After the first lookup for a provider type, subsequent calls are simple dictionary lookups.
+        /// </para>
+        /// <para>
+        /// Common prefixes:
+        /// <list type="bullet">
+        /// <item><description>'@' for SQL Server, PostgreSQL (Npgsql), MySQL, SQLite, DB2, Firebird</description></item>
+        /// <item><description>':' for Oracle</description></item>
+        /// <item><description>'?' for ODBC, OleDb (positional parameters)</description></item>
+        /// </list>
+        /// </para>
+        /// <para>
+        /// If the provider type is not recognized, falls back to <see cref="DefaultParameterPrefix"/>.
+        /// </para>
+        /// </remarks>
+        /// <param name="connection">The database connection.</param>
+        /// <returns>The parameter prefix string (e.g., "@", ":", "?").</returns>
+        /// <exception cref="ArgumentNullException">Thrown when connection is null.</exception>
+        public static string GetParameterPrefix(DbConnection connection)
+        {
+            ArgumentNullException.ThrowIfNull(connection);
+
+            return _prefixCache.GetOrAdd(
+                connection.GetType(),
+                type => InferPrefixFromType(type) ?? DefaultParameterPrefix
+            );
+        }
+
+        /// <summary>
+        /// Infers the SQL parameter prefix from the connection type's full name.
+        /// </summary>
+        /// <param name="connectionType">The type of the database connection.</param>
+        /// <returns>The inferred parameter prefix, or null if the provider is not recognized.</returns>
+        private static string? InferPrefixFromType(Type connectionType)
+        {
+            var typeName = connectionType.FullName ?? "";
+
+            // Oracle uses ':'
+            if (typeName.Contains("Oracle", StringComparison.OrdinalIgnoreCase))
+                return ":";
+
+            // PostgreSQL (Npgsql) uses '@'
+            if (typeName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // MySQL uses '@'
+            if (typeName.Contains("MySql", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // SQLite uses '@'
+            if (typeName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // SQL Server uses '@' (covers Microsoft.Data.SqlClient and System.Data.SqlClient)
+            if (typeName.Contains("SqlConnection", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // ODBC uses positional '?'
+            if (typeName.Contains("Odbc", StringComparison.OrdinalIgnoreCase))
+                return "?";
+
+            // OleDb uses positional '?'
+            if (typeName.Contains("OleDb", StringComparison.OrdinalIgnoreCase))
+                return "?";
+
+            // DB2 uses '@'
+            if (typeName.Contains("DB2", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // Firebird uses '@'
+            if (typeName.Contains("Firebird", StringComparison.OrdinalIgnoreCase) ||
+                typeName.Contains("FbConnection", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            return null; // Unknown provider - will fall back to DefaultParameterPrefix
+        }
 
         private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
         private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -291,6 +388,8 @@ namespace Com.H.Data.Common
             // Process parameters
             if (queryParamList is not null)
             {
+                // Get the parameter prefix for this connection type (cached after first lookup)
+                var parameterPrefix = GetParameterPrefix(conn);
                 var nullParams = new List<(string varName, string sqlParamName)>();
                 int count = 0;
                 foreach (var queryParam in queryParamList.ReduceToUnique(true))
@@ -309,14 +408,12 @@ namespace Com.H.Data.Common
                         .Where(x => !string.IsNullOrEmpty(x.Name))
                         .Distinct().ToList();
 
-
-
                     foreach (var matchingQueryVar in matchingQueryVars)
                     {
                         object? matchingDataModelPropertyValue = null;
                         dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
 
-                        var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", DefaultParameterPrefix)
+                        var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", parameterPrefix)
                             .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
                             .Replace("{{ParameterName}}", _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_"));
 
