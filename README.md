@@ -596,35 +596,47 @@ app.Run();
 
 
 ## What other databases this library supports?
-Any ADO.NET provider that implements DbConnection and DbCommand classes should work with this library.
+This library works with **any ADO.NET provider** that implements `DbConnection` and `DbCommand`. While the samples above use SQL Server, you can use the same code with PostgreSQL, MySQL, SQLite, Oracle, and many others—just swap out the connection class.
 
-> **Note**: The library **automatically detects** the correct parameter prefix based on your database connection type:
->
-> | Database Provider | Prefix | Auto-Detected |
-> |-------------------|--------|---------------|
-> | SQL Server (Microsoft.Data.SqlClient, System.Data.SqlClient) | `@` | ✅ |
-> | PostgreSQL (Npgsql) | `@` | ✅ |
-> | MySQL | `@` | ✅ |
-> | SQLite | `@` | ✅ |
-> | Oracle | `:` | ✅ |
-> | DB2 | `@` | ✅ |
-> | Firebird | `@` | ✅ |
-> | ODBC | `?` | ✅ |
-> | OleDb | `?` | ✅ |
->
-> **No configuration needed!** The prefix is detected from the connection type and cached for performance.
->
-> For unrecognized providers, the library falls back to `DefaultParameterPrefix` (defaults to `@`).
-> You can override this fallback if needed:
-> ```csharp
-> Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = ":"; // fallback for unknown providers
-> ```
->
-> You can also get the detected prefix for any connection using:
-> ```csharp
-> string prefix = Com.H.Data.Common.AdoNetExt.GetParameterPrefix(connection);
-> ```
->
+### Supported databases (tested and auto-configured)
+
+The following databases are automatically recognized and require no additional configuration:
+
+| Database | ADO.NET Provider | Works out of the box |
+|----------|------------------|----------------------|
+| SQL Server | Microsoft.Data.SqlClient, System.Data.SqlClient | ✅ |
+| PostgreSQL | Npgsql | ✅ |
+| MySQL / MariaDB | MySql.Data, MySqlConnector | ✅ |
+| SQLite | Microsoft.Data.Sqlite | ✅ |
+| Oracle | Oracle.ManagedDataAccess | ✅ |
+| DB2 | IBM.Data.DB2 | ✅ |
+| Firebird | FirebirdSql.Data.FirebirdClient | ✅ |
+| SAP HANA | Sap.Data.Hana | ✅ |
+| Snowflake | Snowflake.Data | ✅ |
+| ClickHouse | ClickHouse.Client | ✅ |
+| Teradata | Teradata.Client | ✅ |
+| ODBC | System.Data.Odbc | ✅ |
+| OleDb | System.Data.OleDb | ✅ |
+
+### Using a database not listed above?
+
+If you're using a less common database provider that isn't in the list above, the library will still work. However, you may need to configure the **parameter prefix** manually.
+
+**What is a parameter prefix?** When you use parameterized queries like `WHERE id = {{id}}`, the library converts your placeholder into a database-specific parameter (e.g., `@id` for SQL Server, `:id` for Oracle). Different databases use different prefix symbols.
+
+The library automatically detects the correct prefix for all databases listed above. For unlisted providers, it defaults to `@` (which works for most databases). If your database uses a different prefix, set the fallback:
+
+```csharp
+// Only needed for unrecognized database providers that don't use '@'
+Com.H.Data.Common.AdoNetExt.DefaultParameterPrefix = "<your database's parameter prefix>";
+```
+
+You can also check what prefix the library detected for any connection:
+
+```csharp
+string prefix = Com.H.Data.Common.AdoNetExt.GetParameterPrefix(connection);
+Console.WriteLine($"Using parameter prefix: {prefix}");
+```
 
 ## What other features this library has?
 This small library has several other options that allow for more advanced features that might not be of much use to most, hence samples for those features have been left out in this quick `how to` documentation.

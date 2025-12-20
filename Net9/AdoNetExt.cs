@@ -128,6 +128,23 @@ namespace Com.H.Data.Common
                 typeName.Contains("FbConnection", StringComparison.OrdinalIgnoreCase))
                 return "@";
 
+            // SAP HANA uses '@'
+            if (typeName.Contains("Hana", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // Teradata uses '?'
+            if (typeName.Contains("Teradata", StringComparison.OrdinalIgnoreCase) ||
+                typeName.Contains("TdConnection", StringComparison.OrdinalIgnoreCase))
+                return "?";
+
+            // Snowflake uses ':'
+            if (typeName.Contains("Snowflake", StringComparison.OrdinalIgnoreCase))
+                return ":";
+
+            // ClickHouse uses '@'
+            if (typeName.Contains("ClickHouse", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
             return null; // Unknown provider - will fall back to DefaultParameterPrefix
         }
 
