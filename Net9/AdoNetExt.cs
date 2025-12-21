@@ -83,6 +83,11 @@ namespace Com.H.Data.Common
         }
 
         /// <summary>
+        /// Clears the cached parameter prefixes. Primarily useful for testing scenarios.
+        /// </summary>
+        public static void ClearPrefixCache() => _prefixCache.Clear();
+
+        /// <summary>
         /// Infers the SQL parameter prefix from the connection type's full name.
         /// </summary>
         /// <param name="connectionType">The type of the database connection.</param>
@@ -111,14 +116,6 @@ namespace Com.H.Data.Common
             if (typeName.Contains("SqlConnection", StringComparison.OrdinalIgnoreCase))
                 return "@";
 
-            // ODBC uses positional '?'
-            if (typeName.Contains("Odbc", StringComparison.OrdinalIgnoreCase))
-                return "?";
-
-            // OleDb uses positional '?'
-            if (typeName.Contains("OleDb", StringComparison.OrdinalIgnoreCase))
-                return "?";
-
             // DB2 uses '@'
             if (typeName.Contains("DB2", StringComparison.OrdinalIgnoreCase))
                 return "@";
@@ -131,11 +128,6 @@ namespace Com.H.Data.Common
             // SAP HANA uses '@'
             if (typeName.Contains("Hana", StringComparison.OrdinalIgnoreCase))
                 return "@";
-
-            // Teradata uses '?'
-            if (typeName.Contains("Teradata", StringComparison.OrdinalIgnoreCase) ||
-                typeName.Contains("TdConnection", StringComparison.OrdinalIgnoreCase))
-                return "?";
 
             // Snowflake uses ':'
             if (typeName.Contains("Snowflake", StringComparison.OrdinalIgnoreCase))

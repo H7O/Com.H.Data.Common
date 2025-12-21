@@ -613,9 +613,8 @@ The following databases are automatically recognized and require no additional c
 | SAP HANA | Sap.Data.Hana | ✅ |
 | Snowflake | Snowflake.Data | ✅ |
 | ClickHouse | ClickHouse.Client | ✅ |
-| Teradata | Teradata.Client | ✅ |
-| ODBC | System.Data.Odbc | ✅ |
-| OleDb | System.Data.OleDb | ✅ |
+
+> **Note on ODBC, OleDb, and Teradata**: These databases use positional parameters (`?`) instead of named parameters. The current version of this library only supports named parameters. Support for positional parameters is planned for a future release.
 
 ### Using a database not listed above?
 
