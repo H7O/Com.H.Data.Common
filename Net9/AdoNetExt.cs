@@ -837,11 +837,22 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            using (DbCommand dbc = con.CreateCommand())
+            // Do NOT use 'using' here - the command must stay alive until the result is disposed
+            // The result will take ownership of the command and dispose it when the result is disposed
+            DbCommand dbc = con.CreateCommand();
+            try
             {
                 if (commandTimeout.HasValue)
                     dbc.CommandTimeout = commandTimeout.Value;
-                return await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+                var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+                // Return a new result that takes ownership of the command
+                return new DbAsyncQueryResult<dynamic>(result.AsAsyncEnumerable(), result.Reader, dbc, result.Connection, closeConnectionOnExit);
+            }
+            catch
+            {
+                // Only dispose the command if we fail before returning the result
+                await dbc.DisposeAsync();
+                throw;
             }
         }
 
@@ -885,7 +896,8 @@ namespace Com.H.Data.Common
             var asyncResult = ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
                 .GetAwaiter().GetResult();
 
-            return new DbQueryResult<dynamic>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
+            // Pass through the command ownership to the sync result
+            return new DbQueryResult<dynamic>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Command, asyncResult.Connection, closeConnectionOnExit);
         }
 
         /// <summary>
@@ -996,11 +1008,22 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            using (DbCommand dbc = con.CreateCommand())
+            // Do NOT use 'using' here - the command must stay alive until the result is disposed
+            // The result will take ownership of the command and dispose it when the result is disposed
+            DbCommand dbc = con.CreateCommand();
+            try
             {
                 if (commandTimeout.HasValue)
                     dbc.CommandTimeout = commandTimeout.Value;
-                return await ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+                var result = await ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+                // Return a new result that takes ownership of the command
+                return new DbAsyncQueryResult<T>(result.AsAsyncEnumerable(), result.Reader, dbc, result.Connection, closeConnectionOnExit);
+            }
+            catch
+            {
+                // Only dispose the command if we fail before returning the result
+                await dbc.DisposeAsync();
+                throw;
             }
         }
 
@@ -1048,7 +1071,8 @@ namespace Com.H.Data.Common
             var asyncResult = ExecuteQueryAsync<T>(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken)
                 .GetAwaiter().GetResult();
 
-            return new DbQueryResult<T>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Connection, closeConnectionOnExit);
+            // Pass through the command ownership to the sync result
+            return new DbQueryResult<T>(asyncResult.AsAsyncEnumerable(), asyncResult.Reader, asyncResult.Command, asyncResult.Connection, closeConnectionOnExit);
         }
         #endregion
 

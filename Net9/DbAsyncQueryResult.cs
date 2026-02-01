@@ -27,20 +27,28 @@ public class DbAsyncQueryResult<T> : IAsyncEnumerable<T>, IAsyncDisposable, IDis
 {
     private readonly IAsyncEnumerable<T> _asyncEnumerable;
     private readonly DbDataReader? _reader;
+    private readonly DbCommand? _command;
     private readonly DbConnection? _connection;
     private readonly bool _closeConnectionOnDispose;
     private bool _disposed = false;
 
     internal DbAsyncQueryResult(IAsyncEnumerable<T> asyncEnumerable, DbDataReader? reader, DbConnection? connection, bool closeConnectionOnDispose)
+        : this(asyncEnumerable, reader, null, connection, closeConnectionOnDispose)
+    {
+    }
+
+    internal DbAsyncQueryResult(IAsyncEnumerable<T> asyncEnumerable, DbDataReader? reader, DbCommand? command, DbConnection? connection, bool closeConnectionOnDispose)
     {
         _asyncEnumerable = asyncEnumerable;
         _reader = reader;
+        _command = command;
         _connection = connection;
         _closeConnectionOnDispose = closeConnectionOnDispose;
     }
 
-    // Internal properties for accessing the reader and connection
+    // Internal properties for accessing the reader, command and connection
     internal DbDataReader? Reader => _reader;
+    internal DbCommand? Command => _command;
     internal DbConnection? Connection => _connection;
 
     /// <summary>
@@ -147,6 +155,12 @@ public class DbAsyncQueryResult<T> : IAsyncEnumerable<T>, IAsyncDisposable, IDis
                 await _reader.DisposeAsync();
             }
 
+            // Dispose command if we own it (must be disposed after reader)
+            if (_command != null)
+            {
+                await _command.DisposeAsync();
+            }
+
             // Dispose connection if we own it
             if (_closeConnectionOnDispose && _connection != null)
             {
@@ -175,6 +189,9 @@ public class DbAsyncQueryResult<T> : IAsyncEnumerable<T>, IAsyncDisposable, IDis
         {
             // Use synchronous disposal to avoid GetAwaiter().GetResult() deadlock issues
             _reader?.Dispose();
+
+            // Dispose command if we own it (must be disposed after reader)
+            _command?.Dispose();
 
             if (_closeConnectionOnDispose && _connection != null)
             {
