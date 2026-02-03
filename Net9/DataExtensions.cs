@@ -24,24 +24,29 @@ namespace Com.H.Data.Common
         /// <param name="dataModel">The data model to extract parameters from. Can be an anonymous object, Dictionary&lt;string,object&gt;, 
         /// Dictionary&lt;string,string&gt;, JsonElement, JSON string, or any object with properties.</param>
         /// <param name="descending">If true, later values override earlier ones when duplicate keys are encountered. Default is false.</param>
+        /// <param name="ignoreCase">If true (default), uses case-insensitive key comparison. If false, uses case-sensitive comparison.</param>
         /// <returns>A dictionary containing parameter names as keys and their values, or null if dataModel is null</returns>
         /// <example>
         /// <code>
-        /// // From anonymous object
+        /// // From anonymous object (case-insensitive by default)
         /// var params1 = new { name = "John", age = 30 }.GetDataModelParameters();
         /// 
         /// // From JsonElement
         /// var json = JsonDocument.Parse("{\"name\":\"Jane\",\"age\":25}").RootElement;
         /// var params2 = json.GetDataModelParameters();
         /// 
-        /// // From JSON string
-        /// var params3 = "{\"name\":\"Bob\",\"age\":35}".GetDataModelParameters();
+        /// // Case-sensitive lookup
+        /// var params3 = new { Name = "Bob" }.GetDataModelParameters(ignoreCase: false);
         /// </code>
         /// </example>
-        public static IDictionary<string, object>? GetDataModelParameters(this object dataModel, bool descending = false)
+        public static IDictionary<string, object>? GetDataModelParameters(
+            this object dataModel, 
+            bool descending = false,
+            bool ignoreCase = true)
         {
             if (dataModel == null) return null;
-            Dictionary<string, object> result = [];
+            var comparer = ignoreCase ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            Dictionary<string, object> result = new(comparer);
             foreach (var item in dataModel.EnsureEnumerable())
             {
                 if (((object?)item) == null) continue;
@@ -181,6 +186,7 @@ namespace Com.H.Data.Common
         /// <param name="queryParamsList">The list of query parameters to reduce</param>
         /// <param name="reverse">If true, processes in reverse order and later values override earlier ones for duplicate keys. 
         /// If false, earlier values are preserved for duplicate keys.</param>
+        /// <param name="ignoreCase">If true (default), uses case-insensitive key comparison. If false, uses case-sensitive comparison.</param>
         /// <returns>A list of DbQueryParams with unique regex patterns and merged data models</returns>
         /// <example>
         /// <code>
@@ -199,19 +205,21 @@ namespace Com.H.Data.Common
         /// </example>
         public static List<DbQueryParams> ReduceToUnique(
             this IEnumerable<DbQueryParams> queryParamsList,
-            bool reverse = false)
+            bool reverse = false,
+            bool ignoreCase = true)
         {
             if (queryParamsList == null) return [];
+            var comparer = ignoreCase ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
             var result = new List<DbQueryParams>();
             foreach (var group in (reverse ? queryParamsList.Reverse() : queryParamsList)
                 .GroupBy(x => x.QueryParamsRegex))
             {
-                var mergedDataModels = new Dictionary<string, object>();
+                var mergedDataModels = new Dictionary<string, object>(comparer);
 
                 foreach (var queryParams in group)
                 {
                     if (queryParams is null) continue;
-                    foreach (var dataModelItem in queryParams.DataModel?.GetDataModelParameters(reverse)
+                    foreach (var dataModelItem in queryParams.DataModel?.GetDataModelParameters(reverse, ignoreCase)
                         ?? new Dictionary<string, object>())
                     {
                         if (dataModelItem.Key is null) continue;
@@ -230,51 +238,73 @@ namespace Com.H.Data.Common
         }
 
         /// <summary>
-        /// Replaces parameter placeholders in a string with values from the provided query parameters.
-        /// Similar to SQL parameterization but performs direct string replacement instead of creating DbParameters.
+        /// Replaces parameter placeholders in a template string with values from the provided query parameters.
+        /// Designed for non-SQL templating scenarios such as HTML templates, email content, configuration files, etc.
         /// </summary>
-        /// <param name="input">The input string containing parameter placeholders (e.g., "Hello {{name}}")</param>
+        /// <remarks>
+        /// <para>
+        /// <b>Important:</b> This method performs direct string replacement and is intended for general templating purposes.
+        /// For SQL queries, use <see cref="AdoNetExt.ExecuteQueryAsync(System.Data.Common.DbCommand, string, object?, string, bool, System.Threading.CancellationToken)"/> 
+        /// or related methods which provide proper SQL parameterization to prevent SQL injection.
+        /// </para>
+        /// <para>
+        /// <b>Case Sensitivity:</b> By default, parameter name lookup is case-insensitive (ignoreCase = true).
+        /// Set ignoreCase to false for case-sensitive matching when needed.
+        /// </para>
+        /// </remarks>
+        /// <param name="input">The template string containing parameter placeholders (e.g., "Hello {{name}}")</param>
         /// <param name="queryParamsList">The list of query parameters containing data models and regex patterns for matching placeholders</param>
-        /// <param name="nullReplacementString">The string to use when a parameter value is null. Defaults to empty string.</param>
+        /// <param name="nullReplacementString">The string to use when a parameter value is null or not found. Defaults to empty string.</param>
         /// <param name="valueConverter">Optional custom converter function. Receives the parameter name and value, returns the string representation.
         /// If null, uses the default ToString() conversion.</param>
-        /// <returns>The input string with all matching placeholders replaced by their corresponding values</returns>
+        /// <param name="ignoreCase">If true (default), uses case-insensitive parameter name matching. If false, uses case-sensitive matching.</param>
+        /// <returns>The template string with all matching placeholders replaced by their corresponding values</returns>
         /// <example>
         /// <code>
-        /// // Basic usage
-        /// var template = "Hello {{name}}, you are {{age}} years old.";
+        /// // Basic usage - HTML template (case-insensitive by default)
+        /// var htmlTemplate = "&lt;h1&gt;Hello {{name}}&lt;/h1&gt;&lt;p&gt;You have {{count}} messages.&lt;/p&gt;";
         /// var queryParams = new List&lt;DbQueryParams&gt;
         /// {
-        ///     new() { DataModel = new { name = "John", age = 30 } }
+        ///     new() { DataModel = new { name = "John", count = 5 } }
         /// };
-        /// var result = template.Fill(queryParams);
-        /// // Result: "Hello John, you are 30 years old."
+        /// var result = htmlTemplate.Fill(queryParams);
+        /// // Result: "&lt;h1&gt;Hello John&lt;/h1&gt;&lt;p&gt;You have 5 messages.&lt;/p&gt;"
         /// 
-        /// // With null replacement
-        /// var template2 = "Value: {{value}}";
+        /// // Case-insensitive matching (default) - {{NAME}} matches "name" key
+        /// var template2 = "Hello {{NAME}}!";
         /// var queryParams2 = new List&lt;DbQueryParams&gt;
         /// {
-        ///     new() { DataModel = new { value = (string?)null } }
+        ///     new() { DataModel = new { name = "World" } }
         /// };
-        /// var result2 = template2.Fill(queryParams2, "N/A");
-        /// // Result: "Value: N/A"
+        /// var result2 = template2.Fill(queryParams2);
+        /// // Result: "Hello World!"
         /// 
-        /// // With custom value converter
-        /// var template3 = "Date: {{date}}";
+        /// // Case-sensitive matching - {{NAME}} does NOT match "name" key
+        /// var template3 = "Hello {{NAME}}!";
         /// var queryParams3 = new List&lt;DbQueryParams&gt;
         /// {
-        ///     new() { DataModel = new { date = DateTime.Now } }
+        ///     new() { DataModel = new { name = "World" } }
         /// };
-        /// var result3 = template3.Fill(queryParams3, valueConverter: (name, value) => 
-        ///     value is DateTime dt ? dt.ToString("yyyy-MM-dd") : value?.ToString() ?? "");
-        /// // Result: "Date: 2024-01-15"
+        /// var result3 = template3.Fill(queryParams3, ignoreCase: false);
+        /// // Result: "Hello !" (NAME not found, replaced with empty string)
+        /// 
+        /// // With custom value converter for date formatting
+        /// var template4 = "Event date: {{date}}";
+        /// var queryParams4 = new List&lt;DbQueryParams&gt;
+        /// {
+        ///     new() { DataModel = new { date = new DateTime(2024, 1, 15) } }
+        /// };
+        /// var result4 = template4.Fill(queryParams4, valueConverter: (name, value) =&gt; 
+        ///     value is DateTime dt ? dt.ToString("MMMM dd, yyyy") : value?.ToString() ?? "");
+        /// // Result: "Event date: January 15, 2024"
         /// </code>
         /// </example>
         public static string Fill(
             this string input,
             IEnumerable<DbQueryParams>? queryParamsList,
             string nullReplacementString = "",
-            Func<string, object?, string>? valueConverter = null)
+            Func<string, object?, string>? valueConverter = null,
+            bool ignoreCase = true)
         {
             if (string.IsNullOrEmpty(input)) return input ?? "";
             if (queryParamsList == null || !queryParamsList.Any()) return input;
@@ -282,11 +312,11 @@ namespace Com.H.Data.Common
             string result = input;
             var nullParams = new List<string>();
 
-            foreach (var queryParam in queryParamsList.ReduceToUnique(true))
+            foreach (var queryParam in queryParamsList.ReduceToUnique(true, ignoreCase))
             {
                 if (queryParam is null) continue;
 
-                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
+                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true, ignoreCase);
                 var matchingQueryVars =
                     Regex.Matches(result, queryParam.QueryParamsRegex)
                     .Cast<Match>()

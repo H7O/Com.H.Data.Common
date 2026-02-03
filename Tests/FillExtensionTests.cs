@@ -613,11 +613,10 @@ public class FillExtensionTests
     #region Case Sensitivity Tests
 
     [Fact]
-    public void Fill_CaseMismatch_TreatedAsNullAndReplaced()
+    public void Fill_CaseInsensitive_ByDefault_MatchesDifferentCases()
     {
         // Arrange - Template has {{NAME}} but data model has "name" (lowercase)
-        // Dictionary lookup is case-sensitive, so "NAME" won't be found
-        // The placeholder is still matched by regex, so it's treated as null and replaced with nullReplacementString
+        // By default, ignoreCase is true, so case-insensitive matching is used
         var template = "Hello {{NAME}}!";
         var queryParams = new List<DbQueryParams>
         {
@@ -631,14 +630,15 @@ public class FillExtensionTests
         // Act
         var result = template.Fill(queryParams);
 
-        // Assert - "NAME" not found (case-sensitive), treated as null, replaced with empty string
-        Assert.Equal("Hello !", result);
+        // Assert - "NAME" matches "name" because case-insensitive by default
+        Assert.Equal("Hello World!", result);
     }
 
     [Fact]
-    public void Fill_CaseMismatch_WithNullReplacement_ShowsMissing()
+    public void Fill_CaseSensitive_WhenIgnoreCaseFalse_TreatedAsNull()
     {
-        // Arrange - Same case mismatch scenario, but with custom null replacement
+        // Arrange - Template has {{NAME}} but data model has "name" (lowercase)
+        // With ignoreCase: false, dictionary lookup is case-sensitive
         var template = "Hello {{NAME}}!";
         var queryParams = new List<DbQueryParams>
         {
@@ -650,7 +650,28 @@ public class FillExtensionTests
         };
 
         // Act
-        var result = template.Fill(queryParams, nullReplacementString: "[NOT_FOUND]");
+        var result = template.Fill(queryParams, ignoreCase: false);
+
+        // Assert - "NAME" not found (case-sensitive), treated as null, replaced with empty string
+        Assert.Equal("Hello !", result);
+    }
+
+    [Fact]
+    public void Fill_CaseSensitive_WithNullReplacement_ShowsMissing()
+    {
+        // Arrange - Same case mismatch scenario with case-sensitive matching
+        var template = "Hello {{NAME}}!";
+        var queryParams = new List<DbQueryParams>
+        {
+            new() 
+            { 
+                DataModel = new Dictionary<string, object> { { "name", "World" } },
+                QueryParamsRegex = DefaultRegex
+            }
+        };
+
+        // Act
+        var result = template.Fill(queryParams, nullReplacementString: "[NOT_FOUND]", ignoreCase: false);
 
         // Assert - Shows the null replacement, indicating the key wasn't found
         Assert.Equal("Hello [NOT_FOUND]!", result);
@@ -675,6 +696,59 @@ public class FillExtensionTests
 
         // Assert
         Assert.Equal("Hello World!", result);
+    }
+
+    [Fact]
+    public void Fill_CaseInsensitiveDefault_MatchesDifferentCases()
+    {
+        // Arrange - Case-insensitive matching is now the default behavior
+        // No need for special dictionary setup
+        var template = "Hello {{NAME}}, welcome to {{City}}!";
+        var queryParams = new List<DbQueryParams>
+        {
+            new() 
+            { 
+                DataModel = new Dictionary<string, object> 
+                { 
+                    { "name", "World" },
+                    { "city", "New York" }
+                },
+                QueryParamsRegex = DefaultRegex
+            }
+        };
+
+        // Act
+        var result = template.Fill(queryParams);
+
+        // Assert - Both {{NAME}} and {{City}} are matched despite different casing
+        Assert.Equal("Hello World, welcome to New York!", result);
+    }
+
+    [Fact]
+    public void Fill_CaseInsensitiveDefault_MixedCaseVariables()
+    {
+        // Arrange - Template has variables in various cases, dictionary keys are lowercase
+        // Case-insensitive matching is the default
+        var template = "{{GREETING}} {{Name}}, your ID is {{userId}}.";
+        var queryParams = new List<DbQueryParams>
+        {
+            new() 
+            { 
+                DataModel = new Dictionary<string, object> 
+                { 
+                    { "greeting", "Hello" },
+                    { "name", "John" },
+                    { "userid", "12345" }
+                },
+                QueryParamsRegex = DefaultRegex
+            }
+        };
+
+        // Act
+        var result = template.Fill(queryParams);
+
+        // Assert
+        Assert.Equal("Hello John, your ID is 12345.", result);
     }
 
     #endregion
