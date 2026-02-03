@@ -228,5 +228,114 @@ namespace Com.H.Data.Common
             return result;
 
         }
+
+        /// <summary>
+        /// Replaces parameter placeholders in a string with values from the provided query parameters.
+        /// Similar to SQL parameterization but performs direct string replacement instead of creating DbParameters.
+        /// </summary>
+        /// <param name="input">The input string containing parameter placeholders (e.g., "Hello {{name}}")</param>
+        /// <param name="queryParamsList">The list of query parameters containing data models and regex patterns for matching placeholders</param>
+        /// <param name="nullReplacementString">The string to use when a parameter value is null. Defaults to empty string.</param>
+        /// <param name="valueConverter">Optional custom converter function. Receives the parameter name and value, returns the string representation.
+        /// If null, uses the default ToString() conversion.</param>
+        /// <returns>The input string with all matching placeholders replaced by their corresponding values</returns>
+        /// <example>
+        /// <code>
+        /// // Basic usage
+        /// var template = "Hello {{name}}, you are {{age}} years old.";
+        /// var queryParams = new List&lt;DbQueryParams&gt;
+        /// {
+        ///     new() { DataModel = new { name = "John", age = 30 } }
+        /// };
+        /// var result = template.Fill(queryParams);
+        /// // Result: "Hello John, you are 30 years old."
+        /// 
+        /// // With null replacement
+        /// var template2 = "Value: {{value}}";
+        /// var queryParams2 = new List&lt;DbQueryParams&gt;
+        /// {
+        ///     new() { DataModel = new { value = (string?)null } }
+        /// };
+        /// var result2 = template2.Fill(queryParams2, "N/A");
+        /// // Result: "Value: N/A"
+        /// 
+        /// // With custom value converter
+        /// var template3 = "Date: {{date}}";
+        /// var queryParams3 = new List&lt;DbQueryParams&gt;
+        /// {
+        ///     new() { DataModel = new { date = DateTime.Now } }
+        /// };
+        /// var result3 = template3.Fill(queryParams3, valueConverter: (name, value) => 
+        ///     value is DateTime dt ? dt.ToString("yyyy-MM-dd") : value?.ToString() ?? "");
+        /// // Result: "Date: 2024-01-15"
+        /// </code>
+        /// </example>
+        public static string Fill(
+            this string input,
+            IEnumerable<DbQueryParams>? queryParamsList,
+            string nullReplacementString = "",
+            Func<string, object?, string>? valueConverter = null)
+        {
+            if (string.IsNullOrEmpty(input)) return input ?? "";
+            if (queryParamsList == null || !queryParamsList.Any()) return input;
+
+            string result = input;
+            var nullParams = new List<string>();
+
+            foreach (var queryParam in queryParamsList.ReduceToUnique(true))
+            {
+                if (queryParam is null) continue;
+
+                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
+                var matchingQueryVars =
+                    Regex.Matches(result, queryParam.QueryParamsRegex)
+                    .Cast<Match>()
+                    .Select(x => new
+                    {
+                        Name = x.Groups["param"].Value,
+                        OpenMarker = x.Groups["open_marker"].Value,
+                        CloseMarker = x.Groups["close_marker"].Value
+                    })
+                    .Where(x => !string.IsNullOrEmpty(x.Name))
+                    .DistinctBy(x => x.Name)
+                    .ToList();
+
+                foreach (var matchingQueryVar in matchingQueryVars)
+                {
+                    object? matchingDataModelPropertyValue = null;
+                    dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
+
+                    var fullPlaceholder = matchingQueryVar.OpenMarker + matchingQueryVar.Name + matchingQueryVar.CloseMarker;
+
+                    if (matchingDataModelPropertyValue is null)
+                    {
+                        nullParams.Add(fullPlaceholder);
+                        continue;
+                    }
+
+                    string replacementValue = valueConverter is not null
+                        ? valueConverter(matchingQueryVar.Name, matchingDataModelPropertyValue)
+                        : matchingDataModelPropertyValue?.ToString() ?? "";
+
+                    result = result.Replace(
+                        fullPlaceholder,
+                        replacementValue,
+                        StringComparison.OrdinalIgnoreCase
+                    );
+                }
+            }
+
+            // Handle null params
+            foreach (var nullParam in nullParams)
+            {
+                result = result.Replace(
+                    nullParam,
+                    nullReplacementString,
+                    StringComparison.OrdinalIgnoreCase
+                );
+            }
+
+            return result;
+        }
     }
 }
