@@ -635,10 +635,10 @@ public class FillExtensionTests
     }
 
     [Fact]
-    public void Fill_CaseSensitive_WhenIgnoreCaseFalse_TreatedAsNull()
+    public void Fill_CaseSensitive_WhenEnabled_TreatedAsNull()
     {
         // Arrange - Template has {{NAME}} but data model has "name" (lowercase)
-        // With ignoreCase: false, dictionary lookup is case-sensitive
+        // With caseSensitive: true, dictionary lookup is case-sensitive
         var template = "Hello {{NAME}}!";
         var queryParams = new List<DbQueryParams>
         {
@@ -650,7 +650,7 @@ public class FillExtensionTests
         };
 
         // Act
-        var result = template.Fill(queryParams, ignoreCase: false);
+        var result = template.Fill(queryParams, caseSensitive: true);
 
         // Assert - "NAME" not found (case-sensitive), treated as null, replaced with empty string
         Assert.Equal("Hello !", result);
@@ -671,7 +671,7 @@ public class FillExtensionTests
         };
 
         // Act
-        var result = template.Fill(queryParams, nullReplacementString: "[NOT_FOUND]", ignoreCase: false);
+        var result = template.Fill(queryParams, nullReplacementString: "[NOT_FOUND]", caseSensitive: true);
 
         // Assert - Shows the null replacement, indicating the key wasn't found
         Assert.Equal("Hello [NOT_FOUND]!", result);
