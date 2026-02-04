@@ -597,7 +597,7 @@ namespace Com.H.Data.Common
             }
 
             return await ExecuteQueryAsyncMain(
-                dbc, query, (IEnumerable<DbQueryParams>?)queryParams, closeConnectionOnExit, cToken);
+                dbc, query, queryParams as IEnumerable<DbQueryParams>, closeConnectionOnExit, cToken);
         }
 
         /// <summary>

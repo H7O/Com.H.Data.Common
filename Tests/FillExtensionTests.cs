@@ -752,4 +752,187 @@ public class FillExtensionTests
     }
 
     #endregion
+
+    #region Simple API Tests (object queryParams)
+
+    [Fact]
+    public void Fill_SimpleApi_AnonymousObject_ReplacesPlaceholder()
+    {
+        // Arrange - Using the simpler API with anonymous object
+        var template = "Hello {{name}}!";
+
+        // Act
+        var result = template.Fill(new { name = "World" });
+
+        // Assert
+        Assert.Equal("Hello World!", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_AnonymousObject_MultipleVariables()
+    {
+        // Arrange
+        var template = "{{greeting}} {{name}}, you are {{age}} years old.";
+
+        // Act
+        var result = template.Fill(new { greeting = "Hello", name = "John", age = 30 });
+
+        // Assert
+        Assert.Equal("Hello John, you are 30 years old.", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_Dictionary_ReplacesPlaceholder()
+    {
+        // Arrange - Using Dictionary<string, object>
+        var template = "Hello {{name}}, your score is {{score}}.";
+        var data = new Dictionary<string, object>
+        {
+            { "name", "Alice" },
+            { "score", 95.5 }
+        };
+
+        // Act
+        var result = template.Fill(data);
+
+        // Assert
+        Assert.Equal("Hello Alice, your score is 95.5.", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_CaseInsensitive_ByDefault()
+    {
+        // Arrange - Template has {{NAME}} but data has "name"
+        var template = "Hello {{NAME}}!";
+
+        // Act
+        var result = template.Fill(new { name = "World" });
+
+        // Assert - Case-insensitive by default
+        Assert.Equal("Hello World!", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_CaseSensitive_WhenEnabled()
+    {
+        // Arrange
+        var template = "Hello {{NAME}}!";
+
+        // Act
+        var result = template.Fill(new { name = "World" }, caseSensitive: true);
+
+        // Assert - NAME not found, replaced with empty string
+        Assert.Equal("Hello !", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_WithNullReplacement()
+    {
+        // Arrange
+        var template = "Value: {{value}}";
+
+        // Act
+        var result = template.Fill(new { value = (string?)null }, nullReplacementString: "N/A");
+
+        // Assert
+        Assert.Equal("Value: N/A", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_WithValueConverter()
+    {
+        // Arrange
+        var template = "Date: {{date}}";
+        var testDate = new DateTime(2024, 1, 15);
+
+        // Act
+        var result = template.Fill(
+            new { date = testDate },
+            valueConverter: (name, value) => 
+                value is DateTime dt ? dt.ToString("yyyy-MM-dd") : value?.ToString() ?? "");
+
+        // Assert
+        Assert.Equal("Date: 2024-01-15", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_WithCustomRegex()
+    {
+        // Arrange - Using [[ ]] delimiters instead of {{ }}
+        var template = "Hello [[name]]!";
+        var customRegex = @"(?<open_marker>\[\[)(?<param>.*?)?(?<close_marker>\]\])";
+
+        // Act
+        var result = template.Fill(
+            new { name = "World" },
+            queryParamsRegex: customRegex);
+
+        // Assert
+        Assert.Equal("Hello World!", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_StillSupportsDbQueryParamsList()
+    {
+        // Arrange - The simple API should still work with IEnumerable<DbQueryParams>
+        var template = "Hello {{name}}!";
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { name = "World" } }
+        };
+
+        // Act
+        var result = template.Fill(queryParamsList);
+
+        // Assert
+        Assert.Equal("Hello World!", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_HtmlTemplate()
+    {
+        // Arrange - Real-world HTML templating scenario
+        var htmlTemplate = "<h1>Hello {{name}}</h1><p>You have {{count}} messages.</p>";
+
+        // Act
+        var result = htmlTemplate.Fill(new { name = "John", count = 5 });
+
+        // Assert
+        Assert.Equal("<h1>Hello John</h1><p>You have 5 messages.</p>", result);
+    }
+
+    [Fact]
+    public void Fill_SimpleApi_EmailTemplate()
+    {
+        // Arrange - Email template scenario
+        var emailTemplate = """
+            Dear {{customerName}},
+
+            Your order {{orderId}} has been shipped.
+            Estimated delivery: {{deliveryDate}}
+
+            Thank you for your business!
+            """;
+
+        // Act
+        var result = emailTemplate.Fill(new 
+        { 
+            customerName = "Jane Doe",
+            orderId = "ORD-12345",
+            deliveryDate = "January 20, 2024"
+        });
+
+        // Assert
+        var expected = """
+            Dear Jane Doe,
+
+            Your order ORD-12345 has been shipped.
+            Estimated delivery: January 20, 2024
+
+            Thank you for your business!
+            """;
+        Assert.Equal(expected, result);
+    }
+
+    #endregion
 }

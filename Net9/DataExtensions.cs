@@ -238,7 +238,7 @@ namespace Com.H.Data.Common
         }
 
         /// <summary>
-        /// Replaces parameter placeholders in a template string with values from the provided query parameters.
+        /// Replaces parameter placeholders in a template string with values from the provided parameters.
         /// Designed for non-SQL templating scenarios such as HTML templates, email content, configuration files, etc.
         /// </summary>
         /// <remarks>
@@ -248,58 +248,102 @@ namespace Com.H.Data.Common
         /// or related methods which provide proper SQL parameterization to prevent SQL injection.
         /// </para>
         /// <para>
+        /// <b>Parameter Types:</b> The queryParams parameter accepts multiple types:
+        /// <list type="bullet">
+        /// <item><description>Anonymous objects: <c>new { name = "John", age = 30 }</c></description></item>
+        /// <item><description>Dictionary&lt;string, object&gt;</description></item>
+        /// <item><description>IEnumerable&lt;DbQueryParams&gt; for advanced scenarios with multiple regex patterns</description></item>
+        /// <item><description>JsonElement or JSON string</description></item>
+        /// <item><description>Any object with properties</description></item>
+        /// </list>
+        /// </para>
+        /// <para>
         /// <b>Case Sensitivity:</b> By default, parameter name lookup is case-insensitive (caseSensitive = false).
         /// Set caseSensitive to true for strict case matching when needed.
         /// </para>
         /// </remarks>
         /// <param name="input">The template string containing parameter placeholders (e.g., "Hello {{name}}")</param>
-        /// <param name="queryParamsList">The list of query parameters containing data models and regex patterns for matching placeholders</param>
+        /// <param name="queryParams">The parameters object. Can be an anonymous object, Dictionary, IEnumerable&lt;DbQueryParams&gt;, 
+        /// JsonElement, JSON string, or any object with properties matching placeholder names.</param>
         /// <param name="nullReplacementString">The string to use when a parameter value is null or not found. Defaults to empty string.</param>
         /// <param name="valueConverter">Optional custom converter function. Receives the parameter name and value, returns the string representation.
         /// If null, uses the default ToString() conversion.</param>
         /// <param name="caseSensitive">If true, uses case-sensitive parameter name matching. If false (default), uses case-insensitive matching.</param>
+        /// <param name="queryParamsRegex">Regex pattern for parameter delimiters. Default: @"(?&lt;open_marker&gt;\{\{)(?&lt;param&gt;.*?)?(?&lt;close_marker&gt;\}\})" for {{ }} delimiters.
+        /// Only used when queryParams is not IEnumerable&lt;DbQueryParams&gt;.</param>
         /// <returns>The template string with all matching placeholders replaced by their corresponding values</returns>
         /// <example>
         /// <code>
-        /// // Basic usage - HTML template (case-insensitive by default)
-        /// var htmlTemplate = "&lt;h1&gt;Hello {{name}}&lt;/h1&gt;&lt;p&gt;You have {{count}} messages.&lt;/p&gt;";
-        /// var queryParams = new List&lt;DbQueryParams&gt;
-        /// {
-        ///     new() { DataModel = new { name = "John", count = 5 } }
-        /// };
-        /// var result = htmlTemplate.Fill(queryParams);
+        /// // Simple usage with anonymous object (recommended for most cases)
+        /// var result = "Hello {{name}}!".Fill(new { name = "World" });
+        /// // Result: "Hello World!"
+        /// 
+        /// // HTML template
+        /// var html = "&lt;h1&gt;Hello {{name}}&lt;/h1&gt;&lt;p&gt;You have {{count}} messages.&lt;/p&gt;";
+        /// var result2 = html.Fill(new { name = "John", count = 5 });
         /// // Result: "&lt;h1&gt;Hello John&lt;/h1&gt;&lt;p&gt;You have 5 messages.&lt;/p&gt;"
         /// 
         /// // Case-insensitive matching (default) - {{NAME}} matches "name" key
-        /// var template2 = "Hello {{NAME}}!";
-        /// var queryParams2 = new List&lt;DbQueryParams&gt;
-        /// {
-        ///     new() { DataModel = new { name = "World" } }
-        /// };
-        /// var result2 = template2.Fill(queryParams2);
+        /// var result3 = "Hello {{NAME}}!".Fill(new { name = "World" });
         /// // Result: "Hello World!"
         /// 
         /// // Case-sensitive matching - {{NAME}} does NOT match "name" key
-        /// var template3 = "Hello {{NAME}}!";
-        /// var queryParams3 = new List&lt;DbQueryParams&gt;
-        /// {
-        ///     new() { DataModel = new { name = "World" } }
-        /// };
-        /// var result3 = template3.Fill(queryParams3, caseSensitive: true);
+        /// var result4 = "Hello {{NAME}}!".Fill(new { name = "World" }, caseSensitive: true);
         /// // Result: "Hello !" (NAME not found, replaced with empty string)
         /// 
+        /// // Case-sensitive matching - {{NAME}} does NOT match "name" key
         /// // With custom value converter for date formatting
-        /// var template4 = "Event date: {{date}}";
-        /// var queryParams4 = new List&lt;DbQueryParams&gt;
-        /// {
-        ///     new() { DataModel = new { date = new DateTime(2024, 1, 15) } }
-        /// };
-        /// var result4 = template4.Fill(queryParams4, valueConverter: (name, value) =&gt; 
-        ///     value is DateTime dt ? dt.ToString("MMMM dd, yyyy") : value?.ToString() ?? "");
+        /// var result5 = "Event date: {{date}}".Fill(
+        ///     new { date = new DateTime(2024, 1, 15) },
+        ///     valueConverter: (name, value) =&gt; 
+        ///         value is DateTime dt ? dt.ToString("MMMM dd, yyyy") : value?.ToString() ?? "");
         /// // Result: "Event date: January 15, 2024"
+        /// 
+        /// // Advanced usage with IEnumerable&lt;DbQueryParams&gt; for multiple regex patterns
+        /// var template = "Auth: {auth{token}}, Data: {{name}}";
+        /// var queryParamsList = new List&lt;DbQueryParams&gt;
+        /// {
+        ///     new() { DataModel = new { token = "secret" }, QueryParamsRegex = @"(?&lt;open_marker&gt;\{auth\{)(?&lt;param&gt;.*?)?(?&lt;close_marker&gt;\}\})" },
+        ///     new() { DataModel = new { name = "John" } }
+        /// };
+        /// var result6 = template.Fill(queryParamsList);
+        /// // Result: "Auth: secret, Data: John"
         /// </code>
         /// </example>
+        
         public static string Fill(
+            this string input,
+            object? queryParams = null,
+            string nullReplacementString = "",
+            Func<string, object?, string>? valueConverter = null,
+            bool caseSensitive = false,
+            string queryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})"
+            )
+        {
+            if (queryParams is not null)
+            {
+                if (queryParams is not IEnumerable<DbQueryParams>)
+                {
+                    queryParams = new List<DbQueryParams>()
+                    {
+                        new()
+                        {
+                            DataModel = queryParams,
+                            QueryParamsRegex = queryParamsRegex
+                        }
+                    };
+                }
+            }
+            return FillMain(
+                input,
+                queryParams as IEnumerable<DbQueryParams>,
+                nullReplacementString,
+                valueConverter,
+                caseSensitive
+            );
+        }
+
+        private static string FillMain(
             this string input,
             IEnumerable<DbQueryParams>? queryParamsList,
             string nullReplacementString = "",
