@@ -143,6 +143,13 @@ namespace Com.H.Data.Common
         private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
         private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
+        /// <summary>
+        /// Maximum allowed length for the cleaned parameter name portion of a SQL parameter.
+        /// Names exceeding this length are replaced with a short deterministic name to avoid
+        /// database identifier length limits (e.g., PostgreSQL's 63-character limit).
+        /// </summary>
+        public static int MaxParameterNameLength { get; set; } = 30;
+
         private static string defaultDataTypeRegex = @"(?<open_marker>\{type\{)(?<type>.*?)\{(?<param>.*?)?(?<close_marker>\}\}\})";
         
         /// <summary>
@@ -401,6 +408,7 @@ namespace Com.H.Data.Common
                 var parameterPrefix = GetParameterPrefix(conn);
                 var nullParams = new List<(string varName, string sqlParamName)>();
                 int count = 0;
+                int longParamCount = 0;
                 foreach (var queryParam in queryParamList.ReduceToUnique(true))
                 {
                     count++;
@@ -422,9 +430,13 @@ namespace Com.H.Data.Common
                         object? matchingDataModelPropertyValue = null;
                         dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
 
+                        var cleanedParamName = matchingQueryVar.Name.Length > MaxParameterNameLength
+                            ? $"lp_vxv_long_name_{++longParamCount}"
+                            : _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
+
                         var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", parameterPrefix)
                             .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
-                            .Replace("{{ParameterName}}", _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_"));
+                            .Replace("{{ParameterName}}", cleanedParamName);
 
                         if (matchingDataModelPropertyValue is null)
                         {
