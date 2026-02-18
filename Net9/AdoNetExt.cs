@@ -36,7 +36,7 @@ namespace Com.H.Data.Common
         /// </code>
         /// </example>
         public static string DefaultParameterPrefix { get; set; } = "@";
-        
+
         /// <summary>
         /// Gets or sets the template used for generating unique parameter names in prepared statements.
         /// Supports placeholders: {{DefaultParameterPrefix}}, {{ParameterCount}}, {{ParameterName}}.
@@ -151,7 +151,7 @@ namespace Com.H.Data.Common
         public static int MaxParameterNameLength { get; set; } = 30;
 
         private static string defaultDataTypeRegex = @"(?<open_marker>\{type\{)(?<type>.*?)\{(?<param>.*?)?(?<close_marker>\}\}\})";
-        
+
         /// <summary>
         /// Gets or sets the regex pattern for parsing data type hints in column names.
         /// Used to automatically parse JSON or XML data returned from queries.
@@ -250,7 +250,7 @@ namespace Com.H.Data.Common
                 throw new Exception(errorMsg, ex);
             }
         }
-        
+
         /// <summary>
         /// Ensures the database connection is open. If closed, opens it asynchronously.
         /// Waits for any ongoing operations (Executing, Fetching, Connecting) to complete before opening.
@@ -406,7 +406,7 @@ namespace Com.H.Data.Common
             {
                 // Get the parameter prefix for this connection type (cached after first lookup)
                 var parameterPrefix = GetParameterPrefix(conn);
-                var nullParams = new List<(string varName, string sqlParamName)>();
+                var nullParams = new List<(string queryParamsRegex, string paramName, string sqlParamName)>();
                 int count = 0;
                 int longParamCount = 0;
                 foreach (var queryParam in queryParamList.ReduceToUnique(true))
@@ -440,7 +440,11 @@ namespace Com.H.Data.Common
 
                         if (matchingDataModelPropertyValue is null)
                         {
-                            nullParams.Add((matchingQueryVar.OpenMarker + matchingQueryVar.Name + matchingQueryVar.CloseMarker, sqlParamName));
+                            // Store the regex pattern and param name for deferred replacement.
+                            // This is mutation-proof: instead of saving the literal matched text
+                            // (which may be mutated by subsequent pattern replacements), we re-match
+                            // against the current query state at the end.
+                            nullParams.Add((queryParam.QueryParamsRegex, matchingQueryVar.Name, sqlParamName));
                             continue;
                         }
 
@@ -460,13 +464,19 @@ namespace Com.H.Data.Common
 
                 }
 
+                // Deferred null parameter replacement: re-match against the (possibly mutated) query
+                // to find any remaining unresolved markers for each null parameter.
+                // This approach is mutation-proof because it matches the current query state
+                // rather than relying on saved literal text that may have been altered
+                // by intermediate pattern replacements.
                 foreach (var nullParam in nullParams)
                 {
-                    query = query.Replace(
-                                nullParam.varName
-                                , nullParam.sqlParamName,
-                                StringComparison.OrdinalIgnoreCase
-                                );
+                    query = Regex.Replace(query, nullParam.queryParamsRegex, m =>
+                    {
+                        if (string.Equals(m.Groups["param"].Value, nullParam.paramName, StringComparison.OrdinalIgnoreCase))
+                            return nullParam.sqlParamName;
+                        return m.Value; // not our param, leave it alone
+                    });
                     var p = command.CreateParameter();
                     p.ParameterName = nullParam.sqlParamName;
                     p.Value = DBNull.Value;

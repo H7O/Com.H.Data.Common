@@ -687,4 +687,187 @@ public class AdoNetExtTests : IDisposable
     }
 
     #endregion
+
+    #region Deferred Null Parameter Replacement Tests
+
+    /// <summary>
+    /// Test 1: Overlapping patterns with null in lower-priority source.
+    /// Two DbQueryParams with overlapping regex patterns. The JSON-marker source
+    /// provides a value for "name", while the QueryString-marker source has no "name"
+    /// (null). Verifies the value resolves correctly and no raw markers remain.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteQueryAsync_OverlappingPatternsWithNull_ResolvesToValue()
+    {
+        // JSON body pattern: matches {j{x}} and {{x}}
+        var jsonPattern = @"(?<open_marker>\{\{|\{j\{)(?<param>.*?)?(?<close_marker>\}\})";
+        // QueryString pattern: matches {qs{x}} and {{x}}
+        var qsPattern = @"(?<open_marker>\{\{|\{qs\{)(?<param>.*?)?(?<close_marker>\}\})";
+
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new()
+            {
+                DataModel = new Dictionary<string, object> { { "name", "John" } },
+                QueryParamsRegex = jsonPattern
+            },
+            new()
+            {
+                // name not present → will be null when matched by qsPattern
+                DataModel = new Dictionary<string, object>(),
+                QueryParamsRegex = qsPattern
+            }
+        };
+
+        // {{name}} is matchable by BOTH patterns
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT name, email FROM Users WHERE name = {{name}}",
+            queryParamsList);
+
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+
+        // The value from jsonPattern wins; qsPattern's null becomes an unreferenced DBNull param
+        Assert.Single(rows);
+        Assert.Equal("John", (string)rows[0].name);
+        Assert.Equal("john@test.com", (string)rows[0].email);
+    }
+
+    /// <summary>
+    /// Test 2: Mutation-proof null replacement.
+    /// Pattern A ({a{...}a}) matches a marker with a null param. Pattern B ({{...}})
+    /// matches a different marker and replaces it, mutating the query text. The deferred
+    /// null replacement for Pattern A re-matches via regex against the mutated query and
+    /// still correctly finds and replaces the {a{...}a} marker.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteQueryAsync_MutationProofNullReplacement_StillReplacesAfterMutation()
+    {
+        var patternA = @"(?<open_marker>\{a\{)(?<param>.*?)?(?<close_marker>\}a\})";
+        var patternB = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})";
+
+        // Source order matters: after ReduceToUnique(reverse:true), the LAST item
+        // in the original list is processed FIRST. We want Pattern A to process first
+        // so its null param is deferred, then Pattern B mutates the query.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new()
+            {
+                DataModel = new Dictionary<string, object> { { "name", "John" } },
+                QueryParamsRegex = patternB
+            },
+            new()
+            {
+                // "status" not present → null, will be deferred
+                DataModel = new Dictionary<string, object>(),
+                QueryParamsRegex = patternA
+            }
+        };
+
+        // Pattern A matches {a{status}a} (null → deferred).
+        // Pattern B then replaces {{name}} with a SQL param, mutating the query.
+        // The deferred null replacement re-matches Pattern A's regex against the
+        // mutated query and still finds {a{status}a}.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT name FROM Users WHERE name = {{name}} OR name = {a{status}a}",
+            queryParamsList);
+
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+
+        // name = 'John' matches; name = NULL (from {a{status}a}) doesn't match
+        Assert.Single(rows);
+        Assert.Equal("John", (string)rows[0].name);
+    }
+
+    /// <summary>
+    /// Test 3: Unreferenced parameters are harmless.
+    /// Pattern A defers a null param for {{ghost}}, then Pattern B (which also matches
+    /// {{ghost}}) replaces it with a value. The deferred null param's marker no longer
+    /// exists in the query, but the DBNull parameter is still added to command.Parameters.
+    /// SQLite (and SQL Server) ignore unreferenced parameters, so execution succeeds.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteQueryAsync_UnreferencedNullParam_ExecutesSuccessfully()
+    {
+        // Pattern A: matches only {{x}}
+        var patternA = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})";
+        // Pattern B: matches {{x}} AND {b{x}}
+        var patternB = @"(?<open_marker>\{\{|\{b\{)(?<param>.*?)?(?<close_marker>\}\})";
+
+        // After reversal: Pattern A processed first, Pattern B second
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new()
+            {
+                DataModel = new Dictionary<string, object> { { "ghost", "John" } },
+                QueryParamsRegex = patternB
+            },
+            new()
+            {
+                // ghost not present → null, deferred by Pattern A
+                DataModel = new Dictionary<string, object>(),
+                QueryParamsRegex = patternA
+            }
+        };
+
+        // Pattern A defers {{ghost}} as null. Pattern B then replaces {{ghost}} with a value.
+        // The deferred null marker is now gone from the query, but the DBNull param is still
+        // added (unreferenced). Execution must succeed — unreferenced params are harmless.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT name FROM Users WHERE name = {{ghost}}",
+            queryParamsList);
+
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+
+        // Pattern B's value "John" wins; the unreferenced DBNull param doesn't interfere
+        Assert.Single(rows);
+        Assert.Equal("John", (string)rows[0].name);
+    }
+
+    /// <summary>
+    /// Test 4: Simple null parameter replacement.
+    /// Single DbQueryParams with a param not in the data model. The marker should be
+    /// replaced with a SQL parameter name and the parameter value set to DBNull.Value.
+    /// </summary>
+    [Fact]
+    public void ExecuteQuery_SimpleNullParam_ReplacedWithDbNull()
+    {
+        // "missing" is not in the data model → null → deferred → replaced with DBNull
+        using var result = _connection.ExecuteQuery(
+            "SELECT name FROM Users WHERE name = {{name}} AND {{missing}} IS NULL",
+            new { name = "John" });
+
+        var rows = result.ToList();
+
+        // {{missing}} is replaced with a SQL param whose value is DBNull.
+        // NULL IS NULL evaluates to true in SQL, so the AND clause succeeds.
+        Assert.Single(rows);
+        Assert.Equal("John", (string)rows[0].name);
+    }
+
+    /// <summary>
+    /// Test 5: Case-insensitive null replacement.
+    /// Query contains {{Name}} (uppercase N) and {{name}} (lowercase n). Neither key
+    /// exists in the data model. The regex callback uses OrdinalIgnoreCase comparison,
+    /// so both markers are treated as the same param and replaced. Execution succeeds.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteQueryAsync_CaseInsensitiveNullReplacement_WorksCorrectly()
+    {
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT 'found' as result WHERE {{Name}} IS NULL AND {{name}} IS NULL",
+            new { unrelated = 1 }); // no Name or name key
+
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+
+        // Both {{Name}} and {{name}} are replaced with DBNull params.
+        // NULL IS NULL → true for both conditions. Returns one row.
+        Assert.Single(rows);
+        Assert.Equal("found", (string)rows[0].result);
+    }
+
+    #endregion
 }
