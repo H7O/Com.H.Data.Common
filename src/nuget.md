@@ -1,6 +1,8 @@
 # Com.H.Data.Common
 Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConnection and DbCommand that return dynamic data results `IEnumerable<dynamic>` or `IAsyncEnumerable<dynamic>`.
 
+Works with **every ADO.NET database** — SQL Server, PostgreSQL, MySQL, SQLite, Oracle, ODBC, OleDb, and more. ODBC/OleDb databases that normally require positional `?` parameters are transparently given the same friendly `{{named}}` parameter syntax, so you write one style of query for all providers.
+
 Since the library executes arbitrary SQL, you can run anything your database supports: stored procedures, CTEs, window functions, user-defined functions, temp tables, dynamic SQL, and more.
 
 For source code and documentation, kindly visit the project's github page [https://github.com/H7O/Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common)
@@ -615,8 +617,10 @@ The following databases are automatically recognized and require no additional c
 | SAP HANA | Sap.Data.Hana | ✅ |
 | Snowflake | Snowflake.Data | ✅ |
 | ClickHouse | ClickHouse.Client | ✅ |
+| ODBC | System.Data.Odbc | ✅ |
+| OleDb | System.Data.OleDb | ✅ |
 
-> **Note on ODBC, OleDb, and Teradata**: These databases use positional parameters (`?`) instead of named parameters. The current version of this library only supports named parameters. Support for positional parameters is planned for a future release.
+> **ODBC & OleDb — named parameters on positional-parameter databases**: ODBC and OleDb databases natively use positional `?` parameters, where parameter order matters and each occurrence requires its own parameter object. This library transparently handles the conversion — you write your queries using the same friendly `{{named}}` parameter syntax as any other database, and the library automatically transforms them into correctly ordered positional `?` parameters behind the scenes. This means you get the same clean, readable, named-parameter experience across **all** ADO.NET providers.
 
 ### Using a database not listed above?
 

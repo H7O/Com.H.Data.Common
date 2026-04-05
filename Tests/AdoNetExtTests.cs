@@ -1,6 +1,7 @@
 using Com.H.Data.Common;
 using Microsoft.Data.Sqlite;
 using System.Data.Common;
+using System.Data.Odbc;
 using System.Text.Json;
 
 namespace Tests;
@@ -870,4 +871,322 @@ public class AdoNetExtTests : IDisposable
     }
 
     #endregion
+
+    #region Positional Parameter Tests
+
+    [Fact]
+    public void IsPositionalParameterPrefix_QuestionMark_ReturnsTrue()
+    {
+        Assert.True(AdoNetExt.IsPositionalParameterPrefix("?"));
+    }
+
+    [Fact]
+    public void IsPositionalParameterPrefix_AtSign_ReturnsFalse()
+    {
+        Assert.False(AdoNetExt.IsPositionalParameterPrefix("@"));
+    }
+
+    [Fact]
+    public void IsPositionalParameterPrefix_Colon_ReturnsFalse()
+    {
+        Assert.False(AdoNetExt.IsPositionalParameterPrefix(":"));
+    }
+
+    private static List<DbQueryParams> MakeQueryParams(object dataModel,
+        string regex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})")
+    {
+        return [new DbQueryParams { DataModel = dataModel, QueryParamsRegex = regex }];
+    }
+
+    [Fact]
+    public void BuildPositional_SingleParam_ReplacesWithQuestionMark()
+    {
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE name = {{name}}",
+            MakeQueryParams(new { name = "Jane" }));
+
+        Assert.Equal("SELECT * FROM Users WHERE name = ?", query);
+        Assert.Single(paramList);
+        Assert.Equal("name", paramList[0].Name);
+        Assert.Equal("Jane", paramList[0].Value);
+    }
+
+    [Fact]
+    public void BuildPositional_MultipleParams_OrderedLeftToRight()
+    {
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE age >= {{minAge}} AND age <= {{maxAge}}",
+            MakeQueryParams(new { minAge = 25, maxAge = 35 }));
+
+        Assert.Equal("SELECT * FROM Users WHERE age >= ? AND age <= ?", query);
+        Assert.Equal(2, paramList.Count);
+        Assert.Equal("minAge", paramList[0].Name);
+        Assert.Equal(25, paramList[0].Value);
+        Assert.Equal("maxAge", paramList[1].Name);
+        Assert.Equal(35, paramList[1].Value);
+    }
+
+    [Fact]
+    public void BuildPositional_SameParamTwice_DuplicatesInOrder()
+    {
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE name = {{name}} OR email LIKE {{name}}",
+            MakeQueryParams(new { name = "John" }));
+
+        Assert.Equal("SELECT * FROM Users WHERE name = ? OR email LIKE ?", query);
+        Assert.Equal(2, paramList.Count);
+        // Both entries should have the same value
+        Assert.Equal("name", paramList[0].Name);
+        Assert.Equal("John", paramList[0].Value);
+        Assert.Equal("name", paramList[1].Name);
+        Assert.Equal("John", paramList[1].Value);
+    }
+
+    [Fact]
+    public void BuildPositional_NullParam_ProducesNullValue()
+    {
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE email = {{email}}",
+            MakeQueryParams(new { email = (string?)null }));
+
+        Assert.Equal("SELECT * FROM Users WHERE email = ?", query);
+        Assert.Single(paramList);
+        Assert.Equal("email", paramList[0].Name);
+        Assert.Null(paramList[0].Value);
+    }
+
+    [Fact]
+    public void BuildPositional_MissingParam_ProducesNullValue()
+    {
+        // {{missing}} is not in the data model — should still become ? with null value
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE name = {{name}} AND {{missing}} IS NULL",
+            MakeQueryParams(new { name = "John" }));
+
+        Assert.Equal("SELECT * FROM Users WHERE name = ? AND ? IS NULL", query);
+        Assert.Equal(2, paramList.Count);
+        Assert.Equal("name", paramList[0].Name);
+        Assert.Equal("John", paramList[0].Value);
+        Assert.Equal("missing", paramList[1].Name);
+        Assert.Null(paramList[1].Value);
+    }
+
+    [Fact]
+    public void BuildPositional_ThreeParamsWithRepeats_CorrectOrder()
+    {
+        // {{a}} appears at positions 1 and 3, {{b}} at position 2
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM t WHERE x = {{a}} AND y = {{b}} AND z = {{a}}",
+            MakeQueryParams(new { a = 1, b = 2 }));
+
+        Assert.Equal("SELECT * FROM t WHERE x = ? AND y = ? AND z = ?", query);
+        Assert.Equal(3, paramList.Count);
+        Assert.Equal(("a", (object?)1), paramList[0]);
+        Assert.Equal(("b", (object?)2), paramList[1]);
+        Assert.Equal(("a", (object?)1), paramList[2]);
+    }
+
+    [Fact]
+    public void BuildPositional_CustomDelimiters_WorksCorrectly()
+    {
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE name = [[name]]",
+            MakeQueryParams(new { name = "Jane" },
+                @"(?<open_marker>\[\[)(?<param>.*?)?(?<close_marker>\]\])"));
+
+        Assert.Equal("SELECT * FROM Users WHERE name = ?", query);
+        Assert.Single(paramList);
+        Assert.Equal("Jane", paramList[0].Value);
+    }
+
+    [Fact]
+    public void BuildPositional_DictionaryParam_WorksCorrectly()
+    {
+        var queryParams = new Dictionary<string, object> { { "name", "Bob" }, { "age", 40 } };
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE name = {{name}} AND age = {{age}}",
+            MakeQueryParams(queryParams));
+
+        Assert.Equal("SELECT * FROM Users WHERE name = ? AND age = ?", query);
+        Assert.Equal(2, paramList.Count);
+        Assert.Equal("Bob", paramList[0].Value);
+        Assert.Equal(40, paramList[1].Value);
+    }
+
+    [Fact]
+    public void BuildPositional_NoPlaceholders_ReturnsUnchangedQuery()
+    {
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users ORDER BY id",
+            MakeQueryParams(new { name = "unused" }));
+
+        Assert.Equal("SELECT * FROM Users ORDER BY id", query);
+        Assert.Empty(paramList);
+    }
+
+    [Fact]
+    public void BuildPositional_MultipleDbQueryParams_CombinesValues()
+    {
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new()
+            {
+                DataModel = new Dictionary<string, object> { { "minAge", 25 } },
+                QueryParamsRegex = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})"
+            },
+            new()
+            {
+                DataModel = new Dictionary<string, object> { { "maxAge", 35 } },
+                QueryParamsRegex = @"(?<open_marker>\[\[)(?<param>.*?)?(?<close_marker>\]\])"
+            }
+        };
+
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE age >= {{minAge}} AND age <= [[maxAge]]",
+            queryParamsList);
+
+        Assert.Equal("SELECT * FROM Users WHERE age >= ? AND age <= ?", query);
+        Assert.Equal(2, paramList.Count);
+        Assert.Equal(25, paramList[0].Value);
+        Assert.Equal(35, paramList[1].Value);
+    }
+
+    #endregion
+}
+
+/// <summary>
+/// Integration tests using a real ODBC connection to a Microsoft Access database.
+/// Validates end-to-end positional parameter support.
+/// Tests are silently skipped if sample.accdb or the ODBC driver is not available.
+/// </summary>
+public class OdbcAccessIntegrationTests : IDisposable
+{
+    private readonly DbConnection? _connection;
+    private readonly bool _canRun;
+
+    public OdbcAccessIntegrationTests()
+    {
+        var dbPath = Path.Combine(AppContext.BaseDirectory, "sample.accdb");
+        if (!File.Exists(dbPath)) { _canRun = false; return; }
+
+        try
+        {
+            var connStr = $"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={dbPath};";
+            _connection = new OdbcConnection(connStr);
+            _connection.Open();
+            _canRun = true;
+        }
+        catch
+        {
+            _canRun = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _connection?.Dispose();
+    }
+
+    [Fact]
+    public void Odbc_SelectAll_ReturnsAllRows()
+    {
+        if (!_canRun) return;
+
+        using var result = _connection!.ExecuteQuery("SELECT * FROM TestTable ORDER BY Id");
+        var rows = result.ToList();
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal("Alice", (string)rows[0].Name);
+        Assert.Equal("Bob", (string)rows[1].Name);
+        Assert.Equal("Charlie", (string)rows[2].Name);
+    }
+
+    [Fact]
+    public void Odbc_ParameterizedQuery_SingleParam()
+    {
+        if (!_canRun) return;
+
+        using var result = _connection!.ExecuteQuery(
+            "SELECT * FROM TestTable WHERE Name = {{Name}}",
+            new { Name = "Bob" });
+        var rows = result.ToList();
+
+        Assert.Single(rows);
+        Assert.Equal("Bob", (string)rows[0].Name);
+    }
+
+    [Fact]
+    public void Odbc_ParameterizedQuery_MultipleParams()
+    {
+        if (!_canRun) return;
+
+        using var result = _connection!.ExecuteQuery(
+            "SELECT * FROM TestTable WHERE Id >= {{MinId}} AND Id <= {{MaxId}} ORDER BY Id",
+            new { MinId = 1, MaxId = 2 });
+        var rows = result.ToList();
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("Alice", (string)rows[0].Name);
+        Assert.Equal("Bob", (string)rows[1].Name);
+    }
+
+    [Fact]
+    public void Odbc_ParameterizedQuery_RepeatedParam()
+    {
+        if (!_canRun) return;
+
+        using var result = _connection!.ExecuteQuery(
+            "SELECT * FROM TestTable WHERE Name = {{Name}} OR Name = {{Name}}",
+            new { Name = "Alice" });
+        var rows = result.ToList();
+
+        Assert.Single(rows);
+        Assert.Equal("Alice", (string)rows[0].Name);
+    }
+
+    [Fact]
+    public async Task Odbc_AsyncQuery_ReturnsResults()
+    {
+        if (!_canRun) return;
+
+        await using var result = await _connection!.ExecuteQueryAsync(
+            "SELECT * FROM TestTable WHERE Value > {{MinValue}} ORDER BY Id",
+            new { MinValue = 15.0 });
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("Bob", (string)rows[0].Name);
+        Assert.Equal("Charlie", (string)rows[1].Name);
+    }
+
+    [Fact]
+    public void Odbc_TypedQuery_ReturnsTypedResults()
+    {
+        if (!_canRun) return;
+
+        using var result = _connection!.ExecuteQuery<TestRow>(
+            "SELECT * FROM TestTable ORDER BY Id");
+        var rows = result.ToList();
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(1, rows[0].Id);
+        Assert.Equal("Alice", rows[0].Name);
+    }
+
+    [Fact]
+    public void Odbc_PrefixDetection_ReturnsQuestionMark()
+    {
+        if (!_canRun) return;
+
+        var prefix = AdoNetExt.GetParameterPrefix(_connection!);
+        Assert.Equal("?", prefix);
+    }
+
+    public class TestRow
+    {
+        public int Id { get; set; }
+        public string? Name { get; set; }
+        public double Value { get; set; }
+    }
 }

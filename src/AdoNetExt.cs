@@ -137,8 +137,22 @@ namespace Com.H.Data.Common
             if (typeName.Contains("ClickHouse", StringComparison.OrdinalIgnoreCase))
                 return "@";
 
+            // ODBC uses '?' (positional parameters)
+            if (typeName.Contains("Odbc", StringComparison.OrdinalIgnoreCase))
+                return "?";
+
+            // OleDb uses '?' (positional parameters)
+            if (typeName.Contains("OleDb", StringComparison.OrdinalIgnoreCase))
+                return "?";
+
             return null; // Unknown provider - will fall back to DefaultParameterPrefix
         }
+
+        /// <summary>
+        /// Determines whether the given parameter prefix indicates positional parameters (e.g., '?' for ODBC/OleDb)
+        /// where parameter order matters and each occurrence in the query requires a separate DbParameter.
+        /// </summary>
+        public static bool IsPositionalParameterPrefix(string parameterPrefix) => parameterPrefix == "?";
 
         private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
         private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -406,83 +420,106 @@ namespace Com.H.Data.Common
             {
                 // Get the parameter prefix for this connection type (cached after first lookup)
                 var parameterPrefix = GetParameterPrefix(conn);
-                var nullParams = new List<(string queryParamsRegex, string paramName, string sqlParamName)>();
-                int count = 0;
-                int longParamCount = 0;
-                foreach (var queryParam in queryParamList.ReduceToUnique(true))
+                bool isPositional = IsPositionalParameterPrefix(parameterPrefix);
+
+                if (isPositional)
                 {
-                    count++;
-                    var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
-                    var matchingQueryVars =
-                        Regex.Matches(query, queryParam.QueryParamsRegex)
-                        .Cast<Match>()
-                        .Select(x => new
-                        {
-                            Name = x.Groups["param"].Value,
-                            OpenMarker = x.Groups["open_marker"].Value,
-                            CloseMarker = x.Groups["close_marker"].Value
-                        })
-                        .Where(x => !string.IsNullOrEmpty(x.Name))
-                        .Distinct().ToList();
+                    var (transformedQuery, orderedParams) = BuildPositionalParameters(query, queryParamList);
+                    query = transformedQuery;
 
-                    foreach (var matchingQueryVar in matchingQueryVars)
+                    // Add DbParameters in left-to-right order
+                    // ParameterName is set to a sequential placeholder because some providers
+                    // (e.g., Microsoft.Data.Sqlite) require it even for positional binding.
+                    // True positional drivers (ODBC, OleDb) ignore the name and bind by ordinal.
+                    int paramIndex = 0;
+                    foreach (var (_, value) in orderedParams)
                     {
-                        object? matchingDataModelPropertyValue = null;
-                        dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
-
-                        var cleanedParamName = matchingQueryVar.Name.Length > MaxParameterNameLength
-                            ? $"lp_vxv_long_name_{++longParamCount}"
-                            : _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
-
-                        var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", parameterPrefix)
-                            .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
-                            .Replace("{{ParameterName}}", cleanedParamName);
-
-                        if (matchingDataModelPropertyValue is null)
-                        {
-                            // Store the regex pattern and param name for deferred replacement.
-                            // This is mutation-proof: instead of saving the literal matched text
-                            // (which may be mutated by subsequent pattern replacements), we re-match
-                            // against the current query state at the end.
-                            nullParams.Add((queryParam.QueryParamsRegex, matchingQueryVar.Name, sqlParamName));
-                            continue;
-                        }
-
-                        query = query.Replace(
-                                    matchingQueryVar.OpenMarker
-                                    + matchingQueryVar.Name
-                                    + matchingQueryVar.CloseMarker
-                                    , sqlParamName,
-                                    StringComparison.OrdinalIgnoreCase
-                                    );
-
                         var p = command.CreateParameter();
-                        p.ParameterName = sqlParamName;
-                        p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
+                        p.ParameterName = $"p{paramIndex++}";
+                        p.Value = value ?? DBNull.Value;
                         command.Parameters.Add(p);
                     }
-
                 }
-
-                // Deferred null parameter replacement: re-match against the (possibly mutated) query
-                // to find any remaining unresolved markers for each null parameter.
-                // This approach is mutation-proof because it matches the current query state
-                // rather than relying on saved literal text that may have been altered
-                // by intermediate pattern replacements.
-                foreach (var nullParam in nullParams)
+                else
                 {
-                    query = Regex.Replace(query, nullParam.queryParamsRegex, m =>
+                    // Named parameter path (SQL Server, PostgreSQL, Oracle, SQLite, etc.)
+                    var nullParams = new List<(string queryParamsRegex, string paramName, string sqlParamName)>();
+                    int count = 0;
+                    int longParamCount = 0;
+                    foreach (var queryParam in queryParamList.ReduceToUnique(true))
                     {
-                        if (string.Equals(m.Groups["param"].Value, nullParam.paramName, StringComparison.OrdinalIgnoreCase))
-                            return nullParam.sqlParamName;
-                        return m.Value; // not our param, leave it alone
-                    });
-                    var p = command.CreateParameter();
-                    p.ParameterName = nullParam.sqlParamName;
-                    p.Value = DBNull.Value;
-                    command.Parameters.Add(p);
-                }
+                        count++;
+                        var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
+                        var matchingQueryVars =
+                            Regex.Matches(query, queryParam.QueryParamsRegex)
+                            .Cast<Match>()
+                            .Select(x => new
+                            {
+                                Name = x.Groups["param"].Value,
+                                OpenMarker = x.Groups["open_marker"].Value,
+                                CloseMarker = x.Groups["close_marker"].Value
+                            })
+                            .Where(x => !string.IsNullOrEmpty(x.Name))
+                            .Distinct().ToList();
 
+                        foreach (var matchingQueryVar in matchingQueryVars)
+                        {
+                            object? matchingDataModelPropertyValue = null;
+                            dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
+
+                            var cleanedParamName = matchingQueryVar.Name.Length > MaxParameterNameLength
+                                ? $"lp_vxv_long_name_{++longParamCount}"
+                                : _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
+
+                            var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", parameterPrefix)
+                                .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
+                                .Replace("{{ParameterName}}", cleanedParamName);
+
+                            if (matchingDataModelPropertyValue is null)
+                            {
+                                // Store the regex pattern and param name for deferred replacement.
+                                // This is mutation-proof: instead of saving the literal matched text
+                                // (which may be mutated by subsequent pattern replacements), we re-match
+                                // against the current query state at the end.
+                                nullParams.Add((queryParam.QueryParamsRegex, matchingQueryVar.Name, sqlParamName));
+                                continue;
+                            }
+
+                            query = query.Replace(
+                                        matchingQueryVar.OpenMarker
+                                        + matchingQueryVar.Name
+                                        + matchingQueryVar.CloseMarker
+                                        , sqlParamName,
+                                        StringComparison.OrdinalIgnoreCase
+                                        );
+
+                            var p = command.CreateParameter();
+                            p.ParameterName = sqlParamName;
+                            p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
+                            command.Parameters.Add(p);
+                        }
+
+                    }
+
+                    // Deferred null parameter replacement: re-match against the (possibly mutated) query
+                    // to find any remaining unresolved markers for each null parameter.
+                    // This approach is mutation-proof because it matches the current query state
+                    // rather than relying on saved literal text that may have been altered
+                    // by intermediate pattern replacements.
+                    foreach (var nullParam in nullParams)
+                    {
+                        query = Regex.Replace(query, nullParam.queryParamsRegex, m =>
+                        {
+                            if (string.Equals(m.Groups["param"].Value, nullParam.paramName, StringComparison.OrdinalIgnoreCase))
+                                return nullParam.sqlParamName;
+                            return m.Value; // not our param, leave it alone
+                        });
+                        var p = command.CreateParameter();
+                        p.ParameterName = nullParam.sqlParamName;
+                        p.Value = DBNull.Value;
+                        command.Parameters.Add(p);
+                    }
+                }
             }
 
             command.CommandText = query;
@@ -564,6 +601,64 @@ namespace Com.H.Data.Common
 
 
 
+
+        /// <summary>
+        /// Transforms a query with named placeholders (e.g., {{name}}) into a positional query using '?'
+        /// and returns the parameter values in left-to-right occurrence order.
+        /// Each occurrence of a placeholder produces a separate entry, so the same parameter
+        /// appearing multiple times in the query produces multiple entries with the same value.
+        /// </summary>
+        /// <param name="query">The SQL query with placeholders.</param>
+        /// <param name="queryParamList">The parameter sets with regex patterns and data models.</param>
+        /// <returns>A tuple of (transformedQuery, orderedParameters) where orderedParameters contains
+        /// (paramName, value) pairs in query-occurrence order.</returns>
+        public static (string TransformedQuery, List<(string Name, object? Value)> OrderedParameters)
+            BuildPositionalParameters(string query, IEnumerable<DbQueryParams> queryParamList)
+        {
+            // Build a lookup of param name -> value across all queryParam sets.
+            var paramValues = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var queryParam in queryParamList.ReduceToUnique(true))
+            {
+                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
+                if (dataModelProperties is null) continue;
+                foreach (var kvp in dataModelProperties)
+                {
+                    paramValues.TryAdd(kvp.Key, kvp.Value);
+                }
+            }
+
+            // Collect all placeholder matches across all queryParam regex patterns,
+            // ordered by their position in the query (left-to-right).
+            var allOccurrences = new List<(int Index, string Name, string FullMatch)>();
+            foreach (var queryParam in queryParamList.ReduceToUnique(true))
+            {
+                foreach (Match m in Regex.Matches(query, queryParam.QueryParamsRegex))
+                {
+                    var name = m.Groups["param"].Value;
+                    if (!string.IsNullOrEmpty(name))
+                        allOccurrences.Add((m.Index, name, m.Value));
+                }
+            }
+            // Sort by position so parameters are added in query-occurrence order
+            allOccurrences.Sort((a, b) => a.Index.CompareTo(b.Index));
+
+            // Replace right-to-left to preserve earlier indices
+            for (int i = allOccurrences.Count - 1; i >= 0; i--)
+            {
+                var occ = allOccurrences[i];
+                query = query.Remove(occ.Index, occ.FullMatch.Length).Insert(occ.Index, "?");
+            }
+
+            // Build ordered parameter list
+            var orderedParams = new List<(string Name, object? Value)>();
+            foreach (var occ in allOccurrences)
+            {
+                paramValues.TryGetValue(occ.Name, out var value);
+                orderedParams.Add((occ.Name, value));
+            }
+
+            return (query, orderedParams);
+        }
 
         #endregion
 
