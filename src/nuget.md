@@ -617,8 +617,16 @@ The following databases are automatically recognized and require no additional c
 | SAP HANA | Sap.Data.Hana | ✅ |
 | Snowflake | Snowflake.Data | ✅ |
 | ClickHouse | ClickHouse.Client | ✅ |
+| Teradata | Teradata.Client | ✅ |
+| Informix | IBM.Data.Informix | ✅ |
+| DuckDB | DuckDB.NET.Data | ✅ |
+| Vertica | Vertica.Data | ✅ |
+| SingleStore (MemSQL) | SingleStoreConnector | ✅ |
+| SAP SQL Anywhere | Sap.Data.SQLAnywhere | ✅ |
 | ODBC | System.Data.Odbc | ✅ |
 | OleDb | System.Data.OleDb | ✅ |
+
+> **PostgreSQL-compatible databases**: CockroachDB, TimescaleDB, YugabyteDB, CrateDB, and other PostgreSQL wire-compatible databases work automatically through the Npgsql provider — no additional configuration needed.
 
 > **ODBC & OleDb — named parameters on positional-parameter databases**: ODBC and OleDb databases natively use positional `?` parameters, where parameter order matters and each occurrence requires its own parameter object. This library transparently handles the conversion — you write your queries using the same friendly `{{named}}` parameter syntax as any other database, and the library automatically transforms them into correctly ordered positional `?` parameters behind the scenes. This means you get the same clean, readable, named-parameter experience across **all** ADO.NET providers.
 

@@ -137,6 +137,30 @@ namespace Com.H.Data.Common
             if (typeName.Contains("ClickHouse", StringComparison.OrdinalIgnoreCase))
                 return "@";
 
+            // Teradata uses '@'
+            if (typeName.Contains("Teradata", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // Informix uses '@'
+            if (typeName.Contains("Informix", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // DuckDB uses '$'
+            if (typeName.Contains("DuckDB", StringComparison.OrdinalIgnoreCase))
+                return "$";
+
+            // Vertica uses '@'
+            if (typeName.Contains("Vertica", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // SingleStore (MemSQL) uses '@'
+            if (typeName.Contains("SingleStore", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // SAP SQL Anywhere uses '@'
+            if (typeName.Contains("SQLAnywhere", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
             // ODBC uses '?' (positional parameters)
             if (typeName.Contains("Odbc", StringComparison.OrdinalIgnoreCase))
                 return "?";
