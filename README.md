@@ -1,5 +1,7 @@
 # Com.H.Data.Common
-Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that returns dynamic data results `IEnumerable<dynamic>` and `IAsyncEnumerable<dynamic>`.
+Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConnection and DbCommand that return dynamic data results `IEnumerable<dynamic>` and `IAsyncEnumerable<dynamic>`.
+
+Since the library executes arbitrary SQL, you can run anything your database supports: stored procedures, CTEs, window functions, user-defined functions, temp tables, dynamic SQL, and more.
 
 ## Installation
 Best way to install this library is via NuGet package manager [Com.H.Data.Common](https://www.nuget.org/packages/Com.H.Data.Common).

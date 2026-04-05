@@ -1,7 +1,9 @@
 # Com.H.Data.Common
-Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that return dynamic data result `IEnumerable<dynamic>` or `IAsyncEnumerable<dynamic>`.
-For source code and documentation, kindly visit the project's github page [https://github.com/H7O/Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common)
+Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConnection and DbCommand that return dynamic data results `IEnumerable<dynamic>` or `IAsyncEnumerable<dynamic>`.
 
+Since the library executes arbitrary SQL, you can run anything your database supports: stored procedures, CTEs, window functions, user-defined functions, temp tables, dynamic SQL, and more.
+
+For source code and documentation, kindly visit the project's github page [https://github.com/H7O/Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common)
 
 ## Sample 1
 This sample demonstrates how to execute a simple query without parameters on a SQL Server Database.
