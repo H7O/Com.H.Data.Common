@@ -96,15 +96,19 @@ namespace Com.H.Data.Common
         {
             var typeName = connectionType.FullName ?? "";
 
-            // Oracle uses ':'
-            if (typeName.Contains("Oracle", StringComparison.OrdinalIgnoreCase))
-                return ":";
+            // Ordered by popularity — most common providers are checked first.
+            // Note: each type is only resolved once and then cached, so this ordering
+            // is primarily for code readability and organization.
 
-            // PostgreSQL (Npgsql) uses '@'
+            // SQL Server uses '@' (covers Microsoft.Data.SqlClient and System.Data.SqlClient)
+            if (typeName.Contains("SqlConnection", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // PostgreSQL (Npgsql) uses '@' (also covers CockroachDB, TimescaleDB, YugabyteDB, CrateDB)
             if (typeName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
                 return "@";
 
-            // MySQL uses '@'
+            // MySQL / MariaDB uses '@'
             if (typeName.Contains("MySql", StringComparison.OrdinalIgnoreCase))
                 return "@";
 
@@ -112,54 +116,9 @@ namespace Com.H.Data.Common
             if (typeName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
                 return "@";
 
-            // SQL Server uses '@' (covers Microsoft.Data.SqlClient and System.Data.SqlClient)
-            if (typeName.Contains("SqlConnection", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // DB2 uses '@'
-            if (typeName.Contains("DB2", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // Firebird uses '@'
-            if (typeName.Contains("Firebird", StringComparison.OrdinalIgnoreCase) ||
-                typeName.Contains("FbConnection", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // SAP HANA uses '@'
-            if (typeName.Contains("Hana", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // Snowflake uses ':'
-            if (typeName.Contains("Snowflake", StringComparison.OrdinalIgnoreCase))
+            // Oracle uses ':'
+            if (typeName.Contains("Oracle", StringComparison.OrdinalIgnoreCase))
                 return ":";
-
-            // ClickHouse uses '@'
-            if (typeName.Contains("ClickHouse", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // Teradata uses '@'
-            if (typeName.Contains("Teradata", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // Informix uses '@'
-            if (typeName.Contains("Informix", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // DuckDB uses '$'
-            if (typeName.Contains("DuckDB", StringComparison.OrdinalIgnoreCase))
-                return "$";
-
-            // Vertica uses '@'
-            if (typeName.Contains("Vertica", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // SingleStore (MemSQL) uses '@'
-            if (typeName.Contains("SingleStore", StringComparison.OrdinalIgnoreCase))
-                return "@";
-
-            // SAP SQL Anywhere uses '@'
-            if (typeName.Contains("SQLAnywhere", StringComparison.OrdinalIgnoreCase))
-                return "@";
 
             // ODBC uses '?' (positional parameters)
             if (typeName.Contains("Odbc", StringComparison.OrdinalIgnoreCase))
@@ -168,6 +127,51 @@ namespace Com.H.Data.Common
             // OleDb uses '?' (positional parameters)
             if (typeName.Contains("OleDb", StringComparison.OrdinalIgnoreCase))
                 return "?";
+
+            // DB2 uses '@'
+            if (typeName.Contains("DB2", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // Snowflake uses ':'
+            if (typeName.Contains("Snowflake", StringComparison.OrdinalIgnoreCase))
+                return ":";
+
+            // DuckDB uses '$'
+            if (typeName.Contains("DuckDB", StringComparison.OrdinalIgnoreCase))
+                return "$";
+
+            // Firebird uses '@'
+            if (typeName.Contains("Firebird", StringComparison.OrdinalIgnoreCase) ||
+                typeName.Contains("FbConnection", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // ClickHouse uses '@'
+            if (typeName.Contains("ClickHouse", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // SingleStore (MemSQL) uses '@'
+            if (typeName.Contains("SingleStore", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // Teradata uses '@'
+            if (typeName.Contains("Teradata", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // Vertica uses '@'
+            if (typeName.Contains("Vertica", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // SAP HANA uses '@'
+            if (typeName.Contains("Hana", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // Informix uses '@'
+            if (typeName.Contains("Informix", StringComparison.OrdinalIgnoreCase))
+                return "@";
+
+            // SAP SQL Anywhere uses '@'
+            if (typeName.Contains("SQLAnywhere", StringComparison.OrdinalIgnoreCase))
+                return "@";
 
             return null; // Unknown provider - will fall back to DefaultParameterPrefix
         }
