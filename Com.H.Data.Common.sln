@@ -11,7 +11,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetStandard2.0", "NetStandard2.0\NetStandard2.0.csproj", "{A1D0AC2F-CBE7-40EA-ABC1-BE2F6C9B42A1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Net9", "Net9\Net9.csproj", "{0F2A50D2-1DCF-4986-AFE2-28D4D14C49DF}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Com.H.Data.Common", "src\Com.H.Data.Common.csproj", "{0F2A50D2-1DCF-4986-AFE2-28D4D14C49DF}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests", "Tests\Tests.csproj", "{8DAF2FAC-4B47-448A-AD4D-2B150C4915C1}"
 EndProject

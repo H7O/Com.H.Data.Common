@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Net9\Net9.csproj" />
+    <ProjectReference Include="..\src\Com.H.Data.Common.csproj" />
   </ItemGroup>
 
 </Project>
