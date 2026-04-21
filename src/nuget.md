@@ -7,6 +7,19 @@ Since the library executes arbitrary SQL, you can run anything your database sup
 
 For source code and documentation, kindly visit the project's github page [https://github.com/H7O/Com.H.Data.Common](https://github.com/H7O/Com.H.Data.Common)
 
+## Supported runtimes
+
+The package ships builds for:
+
+| Target | Runtimes it covers |
+|--------|---------------------|
+| `net10.0` | .NET 10 |
+| `net9.0` | .NET 9 |
+| `net8.0` | .NET 8 |
+| `netstandard2.0` | .NET Framework 4.6.1+ (including 4.8.1), .NET Core 2.0+, Mono 5.4+, Xamarin, Unity, UWP |
+
+The full feature set — including `IAsyncEnumerable<dynamic>`, `IAsyncDisposable`, `await foreach`, typed-generic queries via `ExecuteQuery<T>`, nested JSON/XML parsing, and the named-parameter transform for ODBC/OleDb — is available on **every** target, including .NET Standard 2.0. Legacy .NET Framework 4.x consumers get the same async streaming API as .NET 10 consumers.
+
 ## Sample 1
 This sample demonstrates how to execute a simple query without parameters on a SQL Server Database.
 

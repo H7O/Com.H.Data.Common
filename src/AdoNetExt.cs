@@ -74,7 +74,7 @@ namespace Com.H.Data.Common
         /// <exception cref="ArgumentNullException">Thrown when connection is null.</exception>
         public static string GetParameterPrefix(DbConnection connection)
         {
-            ArgumentNullException.ThrowIfNull(connection);
+            if (connection is null) throw new ArgumentNullException(nameof(connection));
 
             return _prefixCache.GetOrAdd(
                 connection.GetType(),
@@ -271,7 +271,23 @@ namespace Com.H.Data.Common
             }
             try
             {
+#if NETSTANDARD2_0
+                // DbProviderFactories isn't exposed by netstandard2.0's reference assemblies,
+                // but it exists at runtime on .NET Framework 4.6.1+ and .NET Core 2.1+.
+                // Resolve via reflection so consumers on those runtimes can still use this helper.
+                var factoriesType =
+                    Type.GetType("System.Data.Common.DbProviderFactories, System.Data, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")
+                    ?? Type.GetType("System.Data.Common.DbProviderFactories, System.Data.Common");
+                var getFactoryMethod = factoriesType?.GetMethod(
+                        "GetFactory", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static,
+                        null, new[] { typeof(string) }, null)
+                    ?? throw new PlatformNotSupportedException(
+                        "DbProviderFactories is not available on this runtime. "
+                        + "Create the DbConnection directly (e.g., new SqlConnection(connectionString)) instead.");
+                var factory = (DbProviderFactory)getFactoryMethod.Invoke(null, new object[] { providerName })!;
+#else
                 var factory = DbProviderFactories.GetFactory(providerName);
+#endif
                 var connection = factory.CreateConnection() ?? throw new Exception($"Failed to create a using '{providerName}' provider."
                         + " Make sure to define the correct provider in your connection string."
                         + @" E.g. ""Provider=Microsoft.Data.SqlClient; Data Source=MySqlServer\MSSQL1;User ID=Admin;Password=;`""");
@@ -304,7 +320,7 @@ namespace Com.H.Data.Common
         /// <exception cref="OperationCanceledException">Thrown when cancellation is requested</exception>
         public static async Task EnsureOpenAsync(this DbConnection conn, CancellationToken cToken = default)
         {
-            ArgumentNullException.ThrowIfNull(conn);
+            if (conn is null) throw new ArgumentNullException(nameof(conn));
             if (conn.State != System.Data.ConnectionState.Open)
             {
                 // if the connection is in executing state, wait for it to finish
@@ -334,7 +350,7 @@ namespace Com.H.Data.Common
         /// <exception cref="OperationCanceledException">Thrown when cancellation is requested</exception>
         public static async Task EnsureClosedAsync(this DbConnection conn, CancellationToken cToken = default)
         {
-            ArgumentNullException.ThrowIfNull(conn);
+            if (conn is null) throw new ArgumentNullException(nameof(conn));
             if (conn.State != System.Data.ConnectionState.Closed)
             {
                 // if the connection is in executing state, wait for it to finish
@@ -392,7 +408,7 @@ namespace Com.H.Data.Common
         CancellationToken cToken = default
         )
         {
-            ArgumentNullException.ThrowIfNull(dbc);
+            if (dbc is null) throw new ArgumentNullException(nameof(dbc));
             if (string.IsNullOrEmpty(query)) throw new ArgumentNullException(nameof(query));
             var conn = dbc.Connection ?? throw new Exception("DbCommand.Connection is null");
 

@@ -145,7 +145,11 @@
             if (checkRoot is not null)
             {
                 if (!checkRoot(traversableItem, nodes[0])) return default;
+#if NETSTANDARD2_0
+                return FindDescendants(traversableItem, path.Substring(nodes[0].Length), findChildren, pathDelimiters);
+#else
                 return FindDescendants(traversableItem, path[nodes[0].Length..], findChildren, pathDelimiters);
+#endif
             }
             // ignore null reference warnings as the code analyzer unable to detect the references are
             // already pre-checked for nulls

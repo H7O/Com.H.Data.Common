@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Tests</RootNamespace>
+    <AssemblyName>Tests.Net481</AssemblyName>
+    <!-- Suppress duplicate AssemblyInfo warnings when sharing source files across test projects -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- .NET Framework's PInvoke loader only searches the app directory,
+         not runtimes/<rid>/native/. Copying native DLLs (e_sqlite3.dll) flat
+         alongside managed assemblies via the MSBuild target below keeps
+         Microsoft.Data.Sqlite working on net481. -->
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <Target Name="CopySQLiteNativeForNet481" AfterTargets="Build">
+    <ItemGroup>
+      <_SqliteNativeDll Include="$(OutputPath)runtimes\win-x64\native\e_sqlite3.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SqliteNativeDll)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('%(_SqliteNativeDll.Identity)')" />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!-- Microsoft.Data.Sqlite 6.x is the last line that targets netstandard2.0,
+         which is what .NET Framework 4.8.1 consumes. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="6.0.10" />
+    <!-- Direct reference to the native-bundle package so its MSBuild targets
+         (which copy e_sqlite3.dll to the output directory) activate reliably
+         under SDK-style + net481. Without this direct reference, the transitive
+         path sometimes fails to trigger the native-copy targets. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\Com.H.Data.Common.csproj" />
+  </ItemGroup>
+
+  <!-- Share test source files with the main test project — a single source of truth. -->
+  <ItemGroup>
+    <Compile Include="..\Tests\AdoNetExtTests.cs" Link="AdoNetExtTests.cs" />
+    <Compile Include="..\Tests\FillExtensionTests.cs" Link="FillExtensionTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\Tests\sample.accdb" Link="sample.accdb" CopyToOutputDirectory="PreserveNewest" />
+    <!-- xUnit config: disable shadow-copy and AppDomain isolation so the
+         flat-copied native e_sqlite3.dll resolves from the build output. -->
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
