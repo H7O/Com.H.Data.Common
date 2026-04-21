@@ -110,7 +110,7 @@
                 || pathDelimiters == null
                 || pathDelimiters.Length < 1
                 ? default
-            : traversableItem.FindDescendant(path, findChild, pathDelimiters.Cast<string>().ToArray(), checkRoot);
+            : traversableItem.FindDescendant(path, findChild, pathDelimiters.Select(x => x.ToString()).ToArray(), checkRoot);
 
 
 
@@ -200,7 +200,7 @@
                       : FindDescendants(traversableItem, 
                       path, 
                       findChildren, 
-                      pathDelimiters.Cast<string>().ToArray(),
+                      pathDelimiters.Select(x => x.ToString()).ToArray(),
                       checkRoot);
 
 

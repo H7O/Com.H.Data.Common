@@ -6,12 +6,21 @@ using System.Reflection;
 
 namespace Com.H.Data.Common
 {
+    /// <summary>
+    /// Provides object-to-object mapping functionality with property matching and type conversion.
+    /// </summary>
     internal class DataMapper
     {
         private readonly ConcurrentDictionary<Type, (string Name, PropertyInfo Info)[]> _typesProperties =
             new();
 
 
+        /// <summary>
+        /// Gets cached property information for the specified type, including custom column names from DataMember or JsonPropertyName attributes.
+        /// </summary>
+        /// <param name="type">The type to get properties for</param>
+        /// <returns>Array of tuples containing property names and PropertyInfo objects</returns>
+        /// <exception cref="ArgumentNullException">Thrown when type is null</exception>
         public (string Name, PropertyInfo Info)[] GetCachedProperties(Type type)
         {
             if (type == null) throw new ArgumentNullException(nameof(type));
@@ -19,6 +28,12 @@ namespace Com.H.Data.Common
                                 _typesProperties[type]
                                 : (_typesProperties[type] = GetPropertiesWithColumnName(type).ToArray());
         }
+        /// <summary>
+        /// Gets cached property information for the specified object, supporting ExpandoObject and regular objects.
+        /// </summary>
+        /// <param name="obj">The object to get properties for</param>
+        /// <returns>Array of tuples containing property names and PropertyInfo objects</returns>
+        /// <exception cref="ArgumentNullException">Thrown when obj is null</exception>
         public (string Name, PropertyInfo Info)[] GetCachedProperties(object obj)
         {
             if (obj == null) throw new ArgumentNullException(nameof(obj));
@@ -46,15 +61,34 @@ namespace Com.H.Data.Common
             }
 
         }
+        /// <summary>
+        /// Maps a collection of source objects to a collection of type T.
+        /// </summary>
+        /// <typeparam name="T">The destination type</typeparam>
+        /// <param name="source">The source collection to map from</param>
+        /// <returns>A collection of mapped objects</returns>
         public IEnumerable<T?>? Map<T>(IEnumerable<object>? source)
         {
             if (source == null) return null;
             return source.Select(x => this.Map<T>(x));
         }
+        /// <summary>
+        /// Maps a source object to the specified destination type using reflection.
+        /// </summary>
+        /// <param name="source">The source object to map from</param>
+        /// <param name="type">The destination type</param>
+        /// <returns>The mapped object</returns>
         public object? Map(object source, Type type)
             => type.GetMethod("Map")?.MakeGenericMethod(type)?
             .Invoke(this, new object[] { source });
 
+        /// <summary>
+        /// Maps a source object to a new instance of type T, supporting dictionaries, ExpandoObjects, and regular objects.
+        /// Performs property name matching (case-insensitive) and automatic type conversion.
+        /// </summary>
+        /// <typeparam name="T">The destination type</typeparam>
+        /// <param name="source">The source object to map from</param>
+        /// <returns>A new instance of type T with mapped properties</returns>
         public T? Map<T>(object source)
         {
             if (source == null) return default;
@@ -169,10 +203,23 @@ namespace Com.H.Data.Common
         }
 
 
+        /// <summary>
+        /// Creates a deep clone of the source object by mapping it to a new instance of the same type.
+        /// </summary>
+        /// <typeparam name="T">The type of the object to clone</typeparam>
+        /// <param name="source">The source object to clone</param>
+        /// <returns>A deep clone of the source object</returns>
         public T? Clone<T>(T source)
             => source is null ? default : this.Map<T>(source);
 
 
+        /// <summary>
+        /// Fills the destination object with property values from the source object.
+        /// Performs property name matching (case-insensitive) and automatic type conversion.
+        /// </summary>
+        /// <param name="destination">The destination object to fill</param>
+        /// <param name="source">The source object to get property values from</param>
+        /// <param name="skipNull">If true, properties with null values in the source will not overwrite destination properties</param>
         public void FillWith(
             object destination,
             object source,
