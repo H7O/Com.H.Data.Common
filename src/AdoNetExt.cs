@@ -329,13 +329,13 @@ namespace Com.H.Data.Common
                     || conn.State == System.Data.ConnectionState.Connecting
                     )
                 {
-                    await Task.Delay(100, cToken);
+                    await Task.Delay(100, cToken).ConfigureAwait(false);
                 }
 
                 // check if cToken is cancelled
                 cToken.ThrowIfCancellationRequested();
 
-                await conn.OpenAsync(cToken);
+                await conn.OpenAsync(cToken).ConfigureAwait(false);
             }
         }
 
@@ -358,13 +358,13 @@ namespace Com.H.Data.Common
                     || conn.State == System.Data.ConnectionState.Fetching
                     || conn.State == System.Data.ConnectionState.Connecting)
                 {
-                    await Task.Delay(100, cToken);
+                    await Task.Delay(100, cToken).ConfigureAwait(false);
                 }
 
                 // check if cToken is cancelled
                 cToken.ThrowIfCancellationRequested();
 
-                await conn.CloseAsync();
+                await conn.CloseAsync().ConfigureAwait(false);
             }
         }
 
@@ -372,7 +372,7 @@ namespace Com.H.Data.Common
         {
             if (reader == null) return;
             if (reader.IsClosed) return;
-            await reader.CloseAsync();
+            await reader.CloseAsync().ConfigureAwait(false);
         }
 
         /// <summary>
@@ -456,7 +456,7 @@ namespace Com.H.Data.Common
             DbDataReader reader;
             DbCommand command = dbc;
 
-            await conn.EnsureOpenAsync(cToken);
+            await conn.EnsureOpenAsync(cToken).ConfigureAwait(false);
             cToken.ThrowIfCancellationRequested();
 
             // Process parameters
@@ -567,7 +567,7 @@ namespace Com.H.Data.Common
             }
 
             command.CommandText = query;
-            reader = await command.ExecuteReaderAsync(cToken);
+            reader = await command.ExecuteReaderAsync(cToken).ConfigureAwait(false);
             cToken.ThrowIfCancellationRequested();
 
             var results = CreateAsyncEnumerableFromReader(reader, hasDataTypes, dataTypeDict, cToken);
@@ -585,7 +585,7 @@ namespace Com.H.Data.Common
                 bool cont = true;
                 while (cont)
                 {
-                    cont = await reader.ReadAsync(cToken);
+                    cont = await reader.ReadAsync(cToken).ConfigureAwait(false);
                     cToken.ThrowIfCancellationRequested();
                     if (!cont) break;
 
@@ -758,7 +758,7 @@ namespace Com.H.Data.Common
             }
 
             return await ExecuteQueryAsyncMain(
-                dbc, query, queryParams as IEnumerable<DbQueryParams>, closeConnectionOnExit, cToken);
+                dbc, query, queryParams as IEnumerable<DbQueryParams>, closeConnectionOnExit, cToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -828,8 +828,11 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
-            await foreach (var _ in result) ; // Consume the enumerable to execute the command
+            var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken).ConfigureAwait(false);
+            // AsAsyncEnumerable() disambiguates the ConfigureAwait call — the result implements
+            // both IAsyncEnumerable<T> and IAsyncDisposable, so calling ConfigureAwait directly
+            // on it is ambiguous between the two TaskAsyncEnumerableExtensions overloads.
+            await foreach (var _ in result.AsAsyncEnumerable().ConfigureAwait(false)) ; // Consume the enumerable to execute the command
         }
 
         /// <summary>
@@ -900,7 +903,7 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            var dynamicResult = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+            var dynamicResult = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken).ConfigureAwait(false);
             var typedAsyncEnumerable = ConvertToType<T>(dynamicResult.AsAsyncEnumerable());
 
             return new DbAsyncQueryResult<T>(
@@ -1005,14 +1008,14 @@ namespace Com.H.Data.Common
             {
                 if (commandTimeout.HasValue)
                     dbc.CommandTimeout = commandTimeout.Value;
-                var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+                var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken).ConfigureAwait(false);
                 // Return a new result that takes ownership of the command
                 return new DbAsyncQueryResult<dynamic>(result.AsAsyncEnumerable(), result.Reader, dbc, result.Connection, closeConnectionOnExit);
             }
             catch
             {
                 // Only dispose the command if we fail before returning the result
-                await dbc.DisposeAsync();
+                await dbc.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
         }
@@ -1091,8 +1094,8 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            var result = await ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken);
-            await foreach (var _ in result) ; // Consume the enumerable to execute the command
+            var result = await ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken).ConfigureAwait(false);
+            await foreach (var _ in result.AsAsyncEnumerable().ConfigureAwait(false)) ; // Consume the enumerable to execute the command
         }
 
         /// <summary>
@@ -1176,14 +1179,14 @@ namespace Com.H.Data.Common
             {
                 if (commandTimeout.HasValue)
                     dbc.CommandTimeout = commandTimeout.Value;
-                var result = await ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken);
+                var result = await ExecuteQueryAsync<T>(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken).ConfigureAwait(false);
                 // Return a new result that takes ownership of the command
                 return new DbAsyncQueryResult<T>(result.AsAsyncEnumerable(), result.Reader, dbc, result.Connection, closeConnectionOnExit);
             }
             catch
             {
                 // Only dispose the command if we fail before returning the result
-                await dbc.DisposeAsync();
+                await dbc.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
         }
@@ -1250,7 +1253,7 @@ namespace Com.H.Data.Common
         /// </summary>
         internal static async IAsyncEnumerable<T> ConvertToType<T>(IAsyncEnumerable<dynamic> source)
         {
-            await foreach (var item in source)
+            await foreach (var item in source.ConfigureAwait(false))
             {
                 var converted = _mapper.Map<T>(item);
                 if (converted is not null)

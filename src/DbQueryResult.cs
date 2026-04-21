@@ -120,7 +120,7 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	{
 		if (_reader != null && !_reader.IsClosed)
 		{
-			await _reader.CloseAsync();
+			await _reader.CloseAsync().ConfigureAwait(false);
 		}
 	}
 
@@ -159,18 +159,18 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 		{
 			if (_reader != null && !_reader.IsClosed)
 			{
-				await _reader.CloseAsync();
+				await _reader.CloseAsync().ConfigureAwait(false);
 			}
 
 			// Dispose command if we own it (must be disposed after reader)
 			if (_command != null)
 			{
-				await _command.DisposeAsync();
+				await _command.DisposeAsync().ConfigureAwait(false);
 			}
 
 			if (_closeConnectionOnDispose && _connection != null)
 			{
-				await _connection.EnsureClosedAsync();
+				await _connection.EnsureClosedAsync().ConfigureAwait(false);
 			}
 
 			_disposed = true;
