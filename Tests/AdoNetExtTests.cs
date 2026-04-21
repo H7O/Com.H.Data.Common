@@ -545,6 +545,52 @@ public class AdoNetExtTests : IDisposable
     }
 
     [Fact]
+    public void ExecuteQuery_FullyConsumedViaToList_ClosesReaderAutomatically()
+    {
+        // The iterator's finally block closes the reader when it reaches the end,
+        // without requiring the caller to explicitly dispose the wrapper. This makes
+        // a subsequent ExecuteQuery on the same connection safe on strict providers.
+        using var result = _connection.ExecuteQuery("SELECT id, name FROM Users ORDER BY id");
+        var reader = result.Reader;
+        Assert.NotNull(reader);
+
+        var rows = result.ToList();
+
+        Assert.Equal(3, rows.Count);
+        Assert.True(reader!.IsClosed, "Reader should be auto-closed once .ToList() exhausts the enumerator.");
+    }
+
+    [Fact]
+    public void ExecuteQuery_PartialConsumptionViaFirst_ClosesReaderAutomatically()
+    {
+        // .First() stops the iteration after one row and disposes the enumerator — the
+        // iterator's finally block runs on enumerator disposal, so the reader is closed
+        // even though the result set wasn't fully read.
+        using var result = _connection.ExecuteQuery("SELECT id, name FROM Users ORDER BY id");
+        var reader = result.Reader;
+        Assert.NotNull(reader);
+
+        var firstRow = result.First();
+        Assert.Equal("John", (string)firstRow.name);
+        Assert.True(reader!.IsClosed, "Reader should be auto-closed after .First() disposes the enumerator early.");
+    }
+
+    [Fact]
+    public void ExecuteQuery_FullyConsumedViaToList_AllowsNewQueryWithoutExplicitDispose()
+    {
+        // The observable payoff of the auto-close: no explicit Dispose needed before the
+        // next query. On strict providers (SQL Server without MARS, Oracle, etc.) this
+        // pattern would throw "already open DataReader" without the auto-close in the
+        // iterator. SQLite is permissive so this test would pass either way, but it
+        // documents the intended usage pattern.
+        var firstRows = _connection.ExecuteQuery("SELECT id, name FROM Users ORDER BY id").ToList();
+        Assert.Equal(3, firstRows.Count);
+
+        var secondRows = _connection.ExecuteQuery("SELECT id, product FROM Orders ORDER BY id").ToList();
+        Assert.Equal(3, secondRows.Count);
+    }
+
+    [Fact]
     public void ExecuteQuery_WithCommandTimeout_DoesNotThrow()
     {
         using var result = _connection.ExecuteQuery(

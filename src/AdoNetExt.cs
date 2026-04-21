@@ -580,65 +580,83 @@ namespace Com.H.Data.Common
             Dictionary<string, dynamic>? dataTypeDict,
             [EnumeratorCancellation] CancellationToken cToken = default)
         {
-            if (reader?.HasRows == true)
+            try
             {
-                bool cont = true;
-                while (cont)
+                if (reader?.HasRows == true)
                 {
-                    cont = await reader.ReadAsync(cToken).ConfigureAwait(false);
-                    cToken.ThrowIfCancellationRequested();
-                    if (!cont) break;
-
-                    ExpandoObject result = new();
-
-                    if (reader.FieldCount == 1
-                        // check if there is no column name
-                        && string.IsNullOrEmpty(reader.GetName(0)))
-
+                    bool cont = true;
+                    while (cont)
                     {
-                        var value = reader.GetValue(0);
-                        if (value is DBNull) yield return null!;
-                        yield return value;
+                        cont = await reader.ReadAsync(cToken).ConfigureAwait(false);
+                        cToken.ThrowIfCancellationRequested();
+                        if (!cont) break;
 
-                    }
+                        ExpandoObject result = new();
 
+                        if (reader.FieldCount == 1
+                            // check if there is no column name
+                            && string.IsNullOrEmpty(reader.GetName(0)))
 
-                    foreach (var item in Enumerable.Range(0, reader.FieldCount)
-                            .Select(x => new { Name = reader.GetName(x), Value = reader.GetValue(x) }))
-                    {
-                        // ensure null of the correct type is returned
-                        if (item.Value is DBNull)
                         {
-                            result.TryAdd(item.Name, null);
+                            var value = reader.GetValue(0);
+                            if (value is DBNull) yield return null!;
+                            yield return value;
+
                         }
-                        else
-                        {
-                            if (hasDataTypes
-                                && dataTypeDict != null
-                                && dataTypeDict.TryGetValue(item.Name, out dynamic? value)
-                                && !string.IsNullOrEmpty(item.Value as string)
-                                )
-                            {
 
-                                switch (value.Type)
-                                {
-                                    case "json":
-                                        result.TryAdd(item.Name, (object)(item.Value as string)!.ParseJson());
-                                        break;
-                                    case "xml":
-                                        result.TryAdd(item.Name, (object)(item.Value as string)!.ParseXml());
-                                        break;
-                                    default:
-                                        result.TryAdd(item.Name, item.Value);
-                                        break;
-                                }
+
+                        foreach (var item in Enumerable.Range(0, reader.FieldCount)
+                                .Select(x => new { Name = reader.GetName(x), Value = reader.GetValue(x) }))
+                        {
+                            // ensure null of the correct type is returned
+                            if (item.Value is DBNull)
+                            {
+                                result.TryAdd(item.Name, null);
                             }
                             else
-                                result.TryAdd(item.Name, item.Value);
-                        }
-                    }
+                            {
+                                if (hasDataTypes
+                                    && dataTypeDict != null
+                                    && dataTypeDict.TryGetValue(item.Name, out dynamic? value)
+                                    && !string.IsNullOrEmpty(item.Value as string)
+                                    )
+                                {
 
-                    yield return result;
+                                    switch (value.Type)
+                                    {
+                                        case "json":
+                                            result.TryAdd(item.Name, (object)(item.Value as string)!.ParseJson());
+                                            break;
+                                        case "xml":
+                                            result.TryAdd(item.Name, (object)(item.Value as string)!.ParseXml());
+                                            break;
+                                        default:
+                                            result.TryAdd(item.Name, item.Value);
+                                            break;
+                                    }
+                                }
+                                else
+                                    result.TryAdd(item.Name, item.Value);
+                            }
+                        }
+
+                        yield return result;
+                    }
+                }
+            }
+            finally
+            {
+                // Auto-close the reader when the iterator finishes — whether via normal
+                // completion (ReadAsync returned false), exception, or enumerator disposal
+                // (e.g., foreach breaking out early, or a LINQ operator like First() that
+                // stops after one match). This frees the reader slot on the connection
+                // immediately, so a subsequent ExecuteQuery on the same connection works
+                // on strict providers (SQL Server without MARS, Oracle, PostgreSQL, etc.)
+                // without requiring the caller to explicitly dispose the result wrapper.
+                // The wrapper's Dispose is still safe to call afterwards — Close is idempotent.
+                if (reader != null && !reader.IsClosed)
+                {
+                    await reader.CloseAsync().ConfigureAwait(false);
                 }
             }
         }
