@@ -18,8 +18,6 @@ The package ships builds for:
 
 The full feature set — including `IAsyncEnumerable<dynamic>`, `IAsyncDisposable`, `await foreach`, typed-generic queries via `ExecuteQuery<T>`, nested JSON/XML parsing, and the named-parameter transform for ODBC/OleDb — is available on **every** target, including .NET Standard 2.0. Legacy .NET Framework 4.x consumers get the same async streaming API as .NET 10 consumers.
 
-All 106 unit tests run on both `net10.0` and `net481` (against the `netstandard2.0` build) in CI.
-
 ## Installation
 Best way to install this library is via NuGet package manager [Com.H.Data.Common](https://www.nuget.org/packages/Com.H.Data.Common).
 
