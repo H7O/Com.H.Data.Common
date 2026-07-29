@@ -1,0 +1,86 @@
+{
+  "$comment": "Baseline for tools/check-shared-drift.ps1. Com.H.Data.Common keeps internal copies of these Com.H classes so it can ship with no NuGet dependencies. Hashes record the last state in which both copies were verified to agree. Regenerate with: pwsh tools/check-shared-drift.ps1 -Approve",
+  "approvedOn": "2026-07-28",
+  "sharedClasses": [
+    {
+      "name": "DataMapper",
+      "comH": "src/Reflection/DataMapper.cs",
+      "dataCommon": "src/DataMapper.cs",
+      "note": "Equivalent. Com.H calls JoinExtensions.LeftJoin as a static method, Com.H.Data.Common uses extension-method syntax.",
+      "comHCodeHash": "2eea8d5dd23831a75c52760508a2427bc40ccd007205908c9d07ca24dfcc4880",
+      "comHDocHash": "a2b0e0f5ea8f9c04f9cb2e52a2bea2999983c11165b92f8e5c8bc405b342c04a",
+      "dataCommonCodeHash": "29421cb16d6cc6874ee729a642ec63167465bee966fa60873a33d3287c04b9c0",
+      "dataCommonDocHash": "ae16c76c78d1b18f10241d7592bba21a5b25c4e42d11e7f1084431001e0b6d68"
+    },
+    {
+      "name": "DataExtensions",
+      "comH": "src/Data/DataExtensions.cs",
+      "dataCommon": "src/DataExtensions.cs",
+      "note": "Only GetDataModelParameters is shared, and its body is identical. Com.H additionally has QueryParams, ReplaceQueryParameterMarkers and a two-parameter binary-compat overload; Com.H.Data.Common additionally has Fill and ReduceToUnique, which are bound to DbQueryParams and cannot move. File-level difference here is expected -- what matters is that GetDataModelParameters changes on one side get mirrored.",
+      "comHCodeHash": "1f35cb32bcb628af1f1c3360358e3d9d9871f85ae7caaf304fbbe82a5a2ca491",
+      "comHDocHash": "a3cd3a083ca1d1a4c4ecf266b86cc2c4d8e6687c76d2e6946e9154bd04187a9c",
+      "dataCommonCodeHash": "9ea0ee32e60554b809fd69f4067ffc814e624a00f4ce17e478fc4cd9bca2a5ac",
+      "dataCommonDocHash": "2f28a3df196a2fe954a33a44b6481993ffa317e56c5dba7a1f92e6cafb8288f8"
+    },
+    {
+      "name": "DynamicPropertyInfo",
+      "comH": "src/Reflection/DynamicPropertyInfo.cs",
+      "dataCommon": "src/DynamicPropertyInfo.cs",
+      "note": "Identical apart from the access modifier.",
+      "comHCodeHash": "54756e09122d5647b37069f4fbac54049621998229cbc081e121d9a66b01d6bc",
+      "comHDocHash": "fac15166667477f0361314af9e54d831b16a96ddfeb18d3d8488c3256f1e4b8b",
+      "dataCommonCodeHash": "54756e09122d5647b37069f4fbac54049621998229cbc081e121d9a66b01d6bc",
+      "dataCommonDocHash": "fac15166667477f0361314af9e54d831b16a96ddfeb18d3d8488c3256f1e4b8b"
+    },
+    {
+      "name": "JoinExtensions",
+      "comH": "src/Linq/JoinExtensions.cs",
+      "dataCommon": "src/JoinExtensions.cs",
+      "note": "Identical apart from the access modifier.",
+      "comHCodeHash": "e9da9484c37b8f74049caeebc8639c4318fee3fd9bba5a5332236d7146739b96",
+      "comHDocHash": "1735c5e972f35569e150aca7cf2dbc8215025ab483a21809e55ec76a47cac2bc",
+      "dataCommonCodeHash": "e9da9484c37b8f74049caeebc8639c4318fee3fd9bba5a5332236d7146739b96",
+      "dataCommonDocHash": "1735c5e972f35569e150aca7cf2dbc8215025ab483a21809e55ec76a47cac2bc"
+    },
+    {
+      "name": "JsonExtensions",
+      "comH": "src/Text/Json/JsonExtensions.cs",
+      "dataCommon": "src/JsonExtensions.cs",
+      "note": "Com.H is a superset: it also has the JsonSerializeAsync / SerializeAsync streaming overloads and IsJsonPrimitive, which Com.H.Data.Common does not need. Shared subset is ParseJson / AsDynamic. Com.H throws ArgumentOutOfRangeException for unmapped JsonValueKind values where Com.H.Data.Common returns null -- deliberate: stricter for a public API.",
+      "comHCodeHash": "41207d7378804c43438ff064086808f31d19700c9a74c16b8d9d10a7b84dc95d",
+      "comHDocHash": "1de54b676f04de6a8cd3e50a28ac35a604db097ad9726ecf31fc4ac1faaef27f",
+      "dataCommonCodeHash": "9ed83920ca8a923d065c00a2d98c1c08381bbb4ce6d60d94bc3eb455d3998687",
+      "dataCommonDocHash": "2f062504bc447da06546d8f34126bb34693d2079e1ce648f7886a85bf3a93db4"
+    },
+    {
+      "name": "LinqExtensions",
+      "comH": "src/Linq/LinqExtensions.cs",
+      "dataCommon": "src/LinqExtensions.cs",
+      "note": "Com.H.Data.Common has an extra #if NETSTANDARD2_0 branch avoiding range syntax; Com.H uses the netstandard-compatible form unconditionally. Same behaviour.",
+      "comHCodeHash": "d936216f54b56d436297f495801cf31a793e1eee3170bd8bc30ea93591f66d72",
+      "comHDocHash": "2e0dcbe37ca61f835c5c7f6af93fe8196ac722c6c19eb5eb7a4bae2787afaad8",
+      "dataCommonCodeHash": "6cb7fad48feccdbee5c48f7bbb70bfd6561ded56b871fe124b3d04ad31dab052",
+      "dataCommonDocHash": "eef918e7369e2d21dfa865ec5ed3ddec7a56dba44db5cfa90cbf5d2a8ffe66f2"
+    },
+    {
+      "name": "ReflectionExtensions",
+      "comH": "src/Reflection/ReflectionExtensions.cs",
+      "dataCommon": "src/ReflectionExtensions.cs",
+      "note": "Com.H has an extra GetEnumIntValues<TEnum>() helper with no caller in Com.H.Data.Common. Copy it over if one ever appears.",
+      "comHCodeHash": "d7a70df1cf7d2dc52e620ffd907f805d5390af3cdaf832088443e039f8734144",
+      "comHDocHash": "66695cc727392bbf3254b0a9121e50a6bca2f7cf92edfeca7d5940d6c562ea5f",
+      "dataCommonCodeHash": "328ed543443b6d4ae468e55270a770b1f3a98317fdd42ec3b6b0e81c509ffe3c",
+      "dataCommonDocHash": "10c2809c0ea67a66b77cc9630071900d67b86c5c08949db72c0fe9d32f202e8a"
+    },
+    {
+      "name": "XmlLinqExtensions",
+      "comH": "src/Xml/Linq/XmlLinqExtensions.cs",
+      "dataCommon": "src/XmlLinqExtensions.cs",
+      "note": "Equivalent. Com.H returns dynamic? and guards ExpandoObject.TryAdd with #if NET5_0_OR_GREATER; Com.H.Data.Common returns dynamic and relies on its Polyfills.cs TryAdd extension instead.",
+      "comHCodeHash": "933af571d143d084aefbcd61347555d44245a5eda5fe26fde0efc6a6110897a6",
+      "comHDocHash": "e48e75cc17031f2e6f9a26c8c08ed50e0e16b6277c845d090d7fa572f57fadbf",
+      "dataCommonCodeHash": "5328eeffd88e5de23c7c6fa002df093a8b23620338f4ddbd1762a847c0fd188d",
+      "dataCommonDocHash": "e48e75cc17031f2e6f9a26c8c08ed50e0e16b6277c845d090d7fa572f57fadbf"
+    }
+  ]
+}

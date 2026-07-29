@@ -110,9 +110,9 @@ namespace Com.H.Data.Common
                                 case JsonValueKind.Number:
                                     result[x.Name] = x.Value.GetDouble(); break;
                                 case JsonValueKind.String:
-                                    result[x.Name] = x.Value.GetString(); break;
+                                    result[x.Name] = x.Value.GetString()!; break;
                                 case JsonValueKind.Null:
-                                    result[x.Name] = null; break;
+                                    result[x.Name] = null!; break;
                                 case JsonValueKind.Array:
                                 case JsonValueKind.Object:
                                     // For nested structures, return the raw JSON text as a string
@@ -149,9 +149,9 @@ namespace Com.H.Data.Common
                                     case JsonValueKind.Number:
                                         result[x.Name] = x.Value.GetDouble(); break;
                                     case JsonValueKind.String:
-                                        result[x.Name] = x.Value.GetString(); break;
+                                        result[x.Name] = x.Value.GetString()!; break;
                                     case JsonValueKind.Null:
-                                        result[x.Name] = null; break;
+                                        result[x.Name] = null!; break;
                                     case JsonValueKind.Array:
                                     case JsonValueKind.Object:
                                         // For nested structures, return the raw JSON text as a string
