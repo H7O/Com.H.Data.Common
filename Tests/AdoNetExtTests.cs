@@ -1098,6 +1098,213 @@ public class AdoNetExtTests : IDisposable
     }
 
     #endregion
+
+    #region Statements After The First Result Set
+
+    // Only the first result set's rows are returned. Before 10.1.0.10 the reader was closed as
+    // soon as those rows ran out, without moving on through NextResult. The later statements
+    // still ran, because closing the reader runs the rest of the batch on SQL Server and SQLite,
+    // but closing also discards their errors. So a failing later statement (SQL Server's THROW
+    // after a SELECT, a constraint violation in a later INSERT) left the caller with a success.
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ErrorAfterFirstResultSet_Throws()
+    {
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT name FROM Users WHERE id = 1; SELECT * FROM missing_table;");
+
+        await Assert.ThrowsAsync<SqliteException>(async () =>
+        {
+            await foreach (var _ in result) { }
+        });
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ErrorAfterEmptyFirstResultSet_Throws()
+    {
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT name FROM Users WHERE id = -1; SELECT * FROM missing_table;");
+
+        await Assert.ThrowsAsync<SqliteException>(async () =>
+        {
+            await foreach (var _ in result) { }
+        });
+    }
+
+    [Fact]
+    public void ExecuteQuery_ErrorAfterFirstResultSet_Throws()
+    {
+        using var result = _connection.ExecuteQuery(
+            "SELECT name FROM Users WHERE id = 1; SELECT * FROM missing_table;");
+
+        Assert.Throws<SqliteException>(() => result.ToList());
+    }
+
+    [Fact]
+    public async Task ExecuteCommandAsync_ErrorAfterFirstResultSet_Throws()
+    {
+        await Assert.ThrowsAsync<SqliteException>(() => _connection.ExecuteCommandAsync(
+            "SELECT name FROM Users WHERE id = 1; SELECT * FROM missing_table;"));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ReturnsOnlyTheFirstResultSet()
+    {
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT name FROM Users WHERE id = 1; SELECT name FROM Users WHERE id = 2;");
+
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+
+        Assert.Single(rows);
+        Assert.Equal("John", (string)rows[0].name);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_StoppingEarly_DoesNotThrow_AndFreesTheConnection()
+    {
+        // A caller that stops after the first row has chosen not to read on, so the error in the
+        // rest of the batch is not raised, and nothing is thrown from disposal.
+        await using (var result = await _connection.ExecuteQueryAsync(
+            "SELECT name FROM Users; SELECT * FROM missing_table;"))
+        {
+            await foreach (var _ in result) break;
+        }
+
+        using var next = _connection.ExecuteQuery("SELECT name FROM Users WHERE id = 2");
+        Assert.Equal("Jane", (string)next.First().name);
+    }
+
+    #endregion
+
+    #region Single Column Without A Name
+
+    // A single column with no name (SQL Server's COUNT(*) without an alias) is returned as its
+    // bare value. Before 10.1.0.10 every row also came back as an object with an empty key, and
+    // a NULL came back three times.
+
+    [Fact]
+    public async Task UnnamedSingleColumn_ReturnsOneValuePerRow()
+    {
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT age AS \"\" FROM Users WHERE id IN (1, 2) ORDER BY id");
+
+        var rows = new List<object?>();
+        await foreach (var row in result) rows.Add((object?)row);
+
+        Assert.Equal(new object?[] { 30L, 25L }, rows);
+    }
+
+    [Fact]
+    public void UnnamedSingleColumn_Typed_ReturnsOneValuePerRow_AndDefaultForNull()
+    {
+        // A NULL unnamed scalar used to come back as null, DBNull and an object; the typed API
+        // dropped the null and mapped the other two. It must stay one element per row.
+        using var values = _connection.ExecuteQuery<long>(
+            "SELECT age AS \"\" FROM Users WHERE id IN (1, 2) ORDER BY id");
+        Assert.Equal(new long[] { 30, 25 }, values.ToList());
+
+        using var nullRow = _connection.ExecuteQuery<long>("SELECT NULL AS \"\"");
+        Assert.Equal(new long[] { 0 }, nullRow.ToList());
+    }
+
+    [Fact]
+    public async Task UnnamedSingleColumn_Null_ReturnsOneNull()
+    {
+        await using var result = await _connection.ExecuteQueryAsync("SELECT NULL AS \"\"");
+
+        var rows = new List<object?>();
+        await foreach (var row in result) rows.Add((object?)row);
+
+        Assert.Equal(new object?[] { null }, rows);
+    }
+
+    #endregion
+
+    #region ExecuteCommand Connection Handling
+
+    [Fact]
+    public async Task ExecuteCommandAsync_CloseConnectionOnExit_ClosesTheConnection_WithoutDisposingIt()
+    {
+        // The flag was ignored. It must close, not dispose: SqlClient, Npgsql and MySqlConnector
+        // can't open a disposed connection again. SQLite can, so the Disposed event is checked.
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        var disposed = false;
+        connection.Disposed += (_, _) => disposed = true;
+        await connection.OpenAsync();
+
+        await connection.ExecuteCommandAsync("SELECT 1", closeConnectionOnExit: true);
+
+        Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
+        Assert.False(disposed);
+
+        // Used again: the library opens it, and closes it again.
+        await connection.ExecuteCommandAsync("SELECT 1", closeConnectionOnExit: true);
+        Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
+        Assert.False(disposed);
+    }
+
+    [Fact]
+    public async Task ExecuteCommandAsync_CloseConnectionOnExit_ClosesWhenTheFirstStatementFails()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        await Assert.ThrowsAsync<SqliteException>(() =>
+            connection.ExecuteCommandAsync("SELECT * FROM missing_table", closeConnectionOnExit: true));
+
+        Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
+    }
+
+    [Fact]
+    public async Task ExecuteCommandAsync_OnACommand_CloseConnectionOnExit_ClosesTheConnection()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        var disposed = false;
+        connection.Disposed += (_, _) => disposed = true;
+        await connection.OpenAsync();
+        using var command = connection.CreateCommand();
+
+        await command.ExecuteCommandAsync("SELECT 1", closeConnectionOnExit: true);
+
+        Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
+        Assert.False(disposed);
+    }
+
+    [Fact]
+    public async Task ExecuteCommandAsync_WithoutTheFlag_LeavesTheConnectionOpen()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        await connection.ExecuteCommandAsync("CREATE TABLE t (a INTEGER)");
+
+        Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+    }
+
+    [Fact]
+    public async Task ExecuteCommandAsync_NullCommand_StillThrowsArgumentNullException()
+    {
+        // The close in the finally must not turn the argument check into a NullReferenceException.
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            ((DbCommand)null!).ExecuteCommandAsync("SELECT 1", closeConnectionOnExit: true));
+    }
+
+    [Fact]
+    public void ExecuteCommand_CloseConnectionOnExit_ClosesTheConnection_WithoutDisposingIt()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        var disposed = false;
+        connection.Disposed += (_, _) => disposed = true;
+        connection.Open();
+
+        connection.ExecuteCommand("CREATE TABLE t (a INTEGER)", closeConnectionOnExit: true);
+
+        Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
+        Assert.False(disposed);
+    }
+
+    #endregion
 }
 
 /// <summary>

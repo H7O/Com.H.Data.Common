@@ -598,10 +598,14 @@ namespace Com.H.Data.Common
                             && string.IsNullOrEmpty(reader.GetName(0)))
 
                         {
+                            // A single column with no name (SQL Server's COUNT(*) or
+                            // SCOPE_IDENTITY() without an alias) is returned as its bare value.
+                            // This used to fall through to the object below as well, so every row
+                            // came back twice (the value, then an object with an empty key), and
+                            // three times when NULL (null, DBNull, the object).
                             var value = reader.GetValue(0);
-                            if (value is DBNull) yield return null!;
-                            yield return value;
-
+                            yield return value is DBNull ? null! : value;
+                            continue;
                         }
 
 
@@ -641,6 +645,21 @@ namespace Com.H.Data.Common
                         }
 
                         yield return result;
+                    }
+                }
+
+                // Every row of the first result set has been read. Move through the remaining
+                // result sets before closing, so an error raised after the first one reaches the
+                // caller: SQL Server's THROW or RAISERROR after a SELECT, or a later statement that
+                // fails. Closing the reader instead discards them (SqlClient cleans up the rest of
+                // the batch without raising its errors), and the caller sees a success. Their rows
+                // are skipped: only the first result set is returned. A caller that stops reading
+                // early never gets here, so nothing is thrown from disposal.
+                if (reader != null)
+                {
+                    while (await reader.NextResultAsync(cToken).ConfigureAwait(false))
+                    {
+                        cToken.ThrowIfCancellationRequested();
                     }
                 }
             }
@@ -846,11 +865,27 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, closeConnectionOnExit, cToken).ConfigureAwait(false);
-            // AsAsyncEnumerable() disambiguates the ConfigureAwait call — the result implements
-            // both IAsyncEnumerable<T> and IAsyncDisposable, so calling ConfigureAwait directly
-            // on it is ambiguous between the two TaskAsyncEnumerableExtensions overloads.
-            await foreach (var _ in result.AsAsyncEnumerable().ConfigureAwait(false)) ; // Consume the enumerable to execute the command
+            try
+            {
+                // The result is made with closeConnectionOnExit false, because disposing it with
+                // true DISPOSES the connection, and SqlClient, Npgsql and MySqlConnector can't open
+                // a disposed connection again. The flag means "close", as on ExecuteQuery.
+                var result = await ExecuteQueryAsync(dbc, query, queryParams, queryParamsRegex, false, cToken).ConfigureAwait(false);
+                await using (((IAsyncDisposable)result).ConfigureAwait(false))
+                {
+                    // AsAsyncEnumerable() disambiguates the ConfigureAwait call — the result implements
+                    // both IAsyncEnumerable<T> and IAsyncDisposable, so calling ConfigureAwait directly
+                    // on it is ambiguous between the two TaskAsyncEnumerableExtensions overloads.
+                    await foreach (var _ in result.AsAsyncEnumerable().ConfigureAwait(false)) ; // Consume the enumerable to execute the command
+                }
+            }
+            finally
+            {
+                // Closed here, not through the result, so the flag is honoured when the first
+                // statement fails too, before any result exists. Before 10.1.0.10 it was ignored.
+                if (closeConnectionOnExit && dbc?.Connection is not null)
+                    await dbc.Connection.EnsureClosedAsync(CancellationToken.None).ConfigureAwait(false);
+            }
         }
 
         /// <summary>
@@ -1112,8 +1147,24 @@ namespace Com.H.Data.Common
             CancellationToken cToken = default
             )
         {
-            var result = await ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, closeConnectionOnExit, cToken).ConfigureAwait(false);
-            await foreach (var _ in result.AsAsyncEnumerable().ConfigureAwait(false)) ; // Consume the enumerable to execute the command
+            try
+            {
+                // Disposing the result disposes the command created for this call. It is made with
+                // closeConnectionOnExit false, because disposing it with true DISPOSES the
+                // connection, which SqlClient, Npgsql and MySqlConnector can't open again.
+                var result = await ExecuteQueryAsync(con, query, queryParams, queryParamsRegex, commandTimeout, false, cToken).ConfigureAwait(false);
+                await using (((IAsyncDisposable)result).ConfigureAwait(false))
+                {
+                    await foreach (var _ in result.AsAsyncEnumerable().ConfigureAwait(false)) ; // Consume the enumerable to execute the command
+                }
+            }
+            finally
+            {
+                // Closed here, not through the result, so the flag is honoured when the first
+                // statement fails too, before any result exists. Before 10.1.0.10 it was ignored.
+                if (closeConnectionOnExit)
+                    await con.EnsureClosedAsync(CancellationToken.None).ConfigureAwait(false);
+            }
         }
 
         /// <summary>
@@ -1273,6 +1324,15 @@ namespace Com.H.Data.Common
         {
             await foreach (var item in source.ConfigureAwait(false))
             {
+                // A NULL in a single unnamed column arrives as null. It is still a row, so it maps
+                // to default(T), as a NULL in a named column does. Passed to the mapper, a dynamic
+                // null binds to the overload that returns null, and the row was dropped.
+                if ((object?)item is null)
+                {
+                    yield return default!;
+                    continue;
+                }
+
                 var converted = _mapper.Map<T>(item);
                 if (converted is not null)
                     yield return converted;

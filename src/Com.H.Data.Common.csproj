@@ -7,17 +7,17 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>Com.H.Data.Common</AssemblyName>
     <RootNamespace>Com.H.Data.Common</RootNamespace>
-    <Version>10.1.0.9</Version>
+    <Version>10.1.0.10</Version>
     <Authors>Hussein Al Bayati</Authors>
-    <Description>Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConntion and DbCommand that return dynamic data results `IEnumerable&lt;dynamic&gt;` or `IAsyncEnumerable&lt;dynamic&gt;`.</Description>
+    <Description>Run SQL on any ADO.NET connection and get the rows back as strongly typed objects (ExecuteQuery&lt;T&gt;, ExecuteQueryAsync&lt;T&gt;) or as dynamic objects (ExecuteQuery, ExecuteQueryAsync), streamed as IEnumerable&lt;T&gt; or IAsyncEnumerable&lt;T&gt;. The methods extend DbConnection and DbCommand; ExecuteCommand and ExecuteCommandAsync run statements that return no rows. Parameters are written as {{name}} in the SQL and always sent as real database parameters, never concatenated into it. Their values come from an anonymous object, a dictionary, a JsonElement or JSON text, and the delimiters can be changed. Typed results map columns to properties by name, or by [DataMember] or [JsonPropertyName]. JSON and XML columns can be returned as nested objects. Works with SQL Server, PostgreSQL, MySQL and MariaDB, SQLite, Oracle, DB2 and any other ADO.NET provider; on ODBC and OleDb the named parameters become positional ? parameters automatically. No package dependencies on .NET 8 and later. Targets .NET 10, 9 and 8, and .NET Standard 2.0, which includes .NET Framework 4.6.1 and later.</Description>
     <Copyright>Hussein Al Bayati</Copyright>
     <PackageProjectUrl>https://github.com/H7O/Com.H.Data.Common</PackageProjectUrl>
     <PackageIcon>128x128.jpg</PackageIcon>
     <PackageReadmeFile>nuget.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/H7O/Com.H.Data.Common</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageTags>ADO.Net, dynamic query results</PackageTags>
-    <PackageReleaseNotes>Maintenance release</PackageReleaseNotes>
+    <PackageTags>ado.net;sql;micro-orm;typed;dynamic;async;iasyncenumerable;parameterized-query;sql-server;postgresql;mysql;sqlite;oracle;db2;odbc;oledb;netstandard2.0</PackageTags>
+    <PackageReleaseNotes>Three fixes. 1) An error raised after the first result set (SQL Server THROW or RAISERROR after a SELECT, or a later statement that fails) is now thrown once the caller has read every row; closing the reader used to discard it. A caller that stops reading early still doesn't see it. Only the first result set is returned, as before. 2) A single column with no name (SQL Server COUNT(*) without an alias) returns one bare value per row (null for NULL, and default(T) for NULL in typed ExecuteQuery&lt;T&gt;); it used to return each row twice, and a NULL three times. 3) ExecuteCommand and ExecuteCommandAsync honour closeConnectionOnExit: they close the connection, without disposing it, also when the first statement fails. They also dispose the command they create.</PackageReleaseNotes>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -36,14 +36,14 @@
 
   <!-- Source Link for GitHub -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.301" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="All" />
   </ItemGroup>
 
   <!-- Polyfill packages for netstandard2.0 (IAsyncEnumerable, IAsyncDisposable,
        EnumeratorCancellationAttribute, System.Text.Json, dynamic runtime binder) -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.10" />
-    <PackageReference Include="System.Text.Json" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.12" />
+    <PackageReference Include="System.Text.Json" Version="10.0.12" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
   </ItemGroup>
 

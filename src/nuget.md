@@ -1,5 +1,5 @@
 # Com.H.Data.Common
-Adds ExecuteQuery and ExecuteQueryAsync extension methods to DbConnection and DbCommand that return dynamic data results `IEnumerable<dynamic>` or `IAsyncEnumerable<dynamic>`.
+Run SQL on any ADO.NET connection and get the rows back as **strongly typed objects** (`ExecuteQuery<T>`, `ExecuteQueryAsync<T>`) or as **dynamic objects** (`ExecuteQuery`, `ExecuteQueryAsync`), streamed as `IEnumerable<T>` or `IAsyncEnumerable<T>`. The methods extend `DbConnection` and `DbCommand`, and `ExecuteCommand` / `ExecuteCommandAsync` run statements that return no rows. Parameters written as `{{name}}` are always sent as real database parameters, never concatenated into the SQL.
 
 Works with **every ADO.NET database** — SQL Server, PostgreSQL, MySQL, SQLite, Oracle, ODBC, OleDb, and more. ODBC/OleDb databases that normally require positional `?` parameters are transparently given the same friendly `{{named}}` parameter syntax, so you write one style of query for all providers.
 
