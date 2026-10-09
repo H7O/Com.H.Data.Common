@@ -7,11 +7,21 @@ using System.Text.Json;
 namespace Tests;
 
 /// <summary>
+/// Test classes that change AdoNetExt's static settings (DefaultParameterTemplate, MaxParameterNameLength),
+/// or depend on their defaults, run one at a time.
+/// </summary>
+internal static class TestCollections
+{
+    public const string AdoNetExtStaticSettings = "AdoNetExt static settings";
+}
+
+/// <summary>
 /// SQLite-based integration tests for the AdoNetExt extension methods.
 /// Covers ExecuteQuery, ExecuteQueryAsync, ExecuteCommand, ExecuteCommandAsync,
 /// parameterized queries, typed queries, long parameter names, null handling,
 /// custom delimiters, multiple parameters, and edge cases.
 /// </summary>
+[Collection(TestCollections.AdoNetExtStaticSettings)]
 public class AdoNetExtTests : IDisposable
 {
     private readonly DbConnection _connection;
@@ -53,6 +63,7 @@ public class AdoNetExtTests : IDisposable
         _connection.Dispose();
         // Reset static state that tests may have changed
         AdoNetExt.MaxParameterNameLength = 30;
+        AdoNetExt.DefaultParameterTemplate = "{{DefaultParameterPrefix}}vxv_{{ParameterCount}}_{{ParameterName}}";
         AdoNetExt.ClearPrefixCache();
     }
 
@@ -774,7 +785,7 @@ public class AdoNetExtTests : IDisposable
         var rows = new List<dynamic>();
         await foreach (var row in result) rows.Add(row);
 
-        // The value from jsonPattern wins; qsPattern's null becomes an unreferenced DBNull param
+        // The value from jsonPattern wins; qsPattern, which has no value, adds no parameter
         Assert.Single(rows);
         Assert.Equal("John", (string)rows[0].name);
         Assert.Equal("john@test.com", (string)rows[0].email);
@@ -828,14 +839,12 @@ public class AdoNetExtTests : IDisposable
     }
 
     /// <summary>
-    /// Test 3: Unreferenced parameters are harmless.
-    /// Pattern A defers a null param for {{ghost}}, then Pattern B (which also matches
-    /// {{ghost}}) replaces it with a value. The deferred null param's marker no longer
-    /// exists in the query, but the DBNull parameter is still added to command.Parameters.
-    /// SQLite (and SQL Server) ignore unreferenced parameters, so execution succeeds.
+    /// Test 3: A placeholder one set has no value for takes another set's value.
+    /// Pattern A has no value for {{ghost}} and leaves it, then Pattern B (which also matches
+    /// {{ghost}}) replaces it with a value. No DBNull parameter is added for Pattern A.
     /// </summary>
     [Fact]
-    public async Task ExecuteQueryAsync_UnreferencedNullParam_ExecutesSuccessfully()
+    public async Task ExecuteQueryAsync_NullInOneSet_TakesTheOtherSetsValue()
     {
         // Pattern A: matches only {{x}}
         var patternA = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})";
@@ -858,19 +867,19 @@ public class AdoNetExtTests : IDisposable
             }
         };
 
-        // Pattern A defers {{ghost}} as null. Pattern B then replaces {{ghost}} with a value.
-        // The deferred null marker is now gone from the query, but the DBNull param is still
-        // added (unreferenced). Execution must succeed — unreferenced params are harmless.
-        await using var result = await _connection.ExecuteQueryAsync(
+        // Pattern A leaves {{ghost}}, which has no value there. Pattern B then replaces it with a value.
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
             "SELECT name FROM Users WHERE name = {{ghost}}",
             queryParamsList);
 
         var rows = new List<dynamic>();
         await foreach (var row in result) rows.Add(row);
 
-        // Pattern B's value "John" wins; the unreferenced DBNull param doesn't interfere
+        // Pattern B's value "John" is the only parameter
         Assert.Single(rows);
         Assert.Equal("John", (string)rows[0].name);
+        Assert.Single(command.Parameters.Cast<DbParameter>());
     }
 
     /// <summary>
@@ -903,17 +912,551 @@ public class AdoNetExtTests : IDisposable
     [Fact]
     public async Task ExecuteQueryAsync_CaseInsensitiveNullReplacement_WorksCorrectly()
     {
-        await using var result = await _connection.ExecuteQueryAsync(
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
             "SELECT 'found' as result WHERE {{Name}} IS NULL AND {{name}} IS NULL",
             new { unrelated = 1 }); // no Name or name key
 
         var rows = new List<dynamic>();
         await foreach (var row in result) rows.Add(row);
 
-        // Both {{Name}} and {{name}} are replaced with DBNull params.
+        // {{Name}} and {{name}} are one DBNull parameter.
         // NULL IS NULL → true for both conditions. Returns one row.
         Assert.Single(rows);
         Assert.Equal("found", (string)rows[0].result);
+        Assert.Single(command.Parameters.Cast<DbParameter>());
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_MoreThanTenPlaceholders_EachGetsItsOwnValue()
+    {
+        // Slots are numbered: indexes of two digits (10, 11, and the NULL one after them) must not be
+        // confused with one-digit ones.
+        var values = Enumerable.Range(0, 12).ToDictionary(i => "a" + i, i => (object)("v" + i));
+        var query = "SELECT " + string.Join(", ", Enumerable.Range(0, 13).Select(i => "{{a" + i + "}} AS c" + i));
+        await using var result = await _connection.ExecuteQueryAsync(query, values);
+
+        var row = (IDictionary<string, object?>)await SingleRowAsync(result);
+        for (int i = 0; i < 12; i++)
+            Assert.Equal("v" + i, row["c" + i]);
+        Assert.Null(row["c12"]);
+    }
+
+    [Fact]
+    public void BuildPositional_MoreThanTenPlaceholders_ValuesInOrder()
+    {
+        var values = Enumerable.Range(0, 12).ToDictionary(i => "a" + i, i => (object)("v" + i));
+        var query = "SELECT " + string.Join(", ", Enumerable.Range(0, 13).Select(i => "{{a" + i + "}}"));
+
+        var (transformed, paramList) = AdoNetExt.BuildPositionalParameters(query, MakeQueryParams(values));
+
+        Assert.Equal("SELECT " + string.Join(", ", Enumerable.Repeat("?", 13)), transformed);
+        Assert.Equal(Enumerable.Range(0, 12).Select(i => (object?)("v" + i)).Append(null), paramList.Select(p => p.Value));
+    }
+
+    #endregion
+
+    #region Placeholder Names
+
+    // A placeholder can be named with any characters, the way a JSON body's keys are. Its SQL parameter
+    // is named after it with only ASCII letters, digits and underscores kept, a name that comes out the
+    // same as another's (compared ignoring case) gets a numbered suffix, and placeholders whose names
+    // differ only in case are one parameter.
+
+    private static readonly JsonElement NamesBody = JsonDocument.Parse("""
+        {
+          "first name": "Ann", "first-name": "Bob", "first_name": "Cy",
+          "Email": "a@b.c", "@type": "admin", "price (€)": "5 EUR", "prénom": "Zoé"
+        }
+        """).RootElement;
+
+    private const string JsonBodyPattern = @"(?<open_marker>\{\{|\{j\{)(?<param>.*?)?(?<close_marker>\}\})";
+    private const string QueryStringPattern = @"(?<open_marker>\{\{|\{qs\{)(?<param>.*?)?(?<close_marker>\}\})";
+
+    private static async Task<dynamic> SingleRowAsync(DbAsyncQueryResult<dynamic> result)
+    {
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+        return Assert.Single(rows);
+    }
+
+    /// <summary>
+    /// Every parameter the command got is named with ASCII letters, digits and underscores after the
+    /// prefix, no two names are the same ignoring case, and each one is in the SQL.
+    /// </summary>
+    private static void AssertParameterNames(DbCommand command, int expectedCount)
+    {
+        var names = command.Parameters.Cast<DbParameter>().Select(p => p.ParameterName).ToList();
+        Assert.Equal(expectedCount, names.Count);
+        Assert.All(names, name => Assert.Matches("^@[A-Za-z0-9_]+$", name));
+        Assert.Equal(names.Count, names.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(names, name => Assert.Contains(name, command.CommandText));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_NamesThatCleanToTheSameName_EachGetsItsOwnValue()
+    {
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
+            "SELECT {{first name}} AS a, {{first-name}} AS b, {{first_name}} AS c", NamesBody);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("Ann", (string)row.a);
+        Assert.Equal("Bob", (string)row.b);
+        Assert.Equal("Cy", (string)row.c);
+        AssertParameterNames(command, 3);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_NamesThatDifferOnlyInCase_AreOneParameter()
+    {
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
+            "SELECT {{Email}} AS a, {{email}} AS b, {{EMAIL}} AS c", NamesBody);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("a@b.c", (string)row.a);
+        Assert.Equal("a@b.c", (string)row.b);
+        Assert.Equal("a@b.c", (string)row.c);
+        AssertParameterNames(command, 1);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_OneNameUnderTwoMarkersOfOnePattern_IsOneParameter()
+    {
+        // The pattern matches both {{Email}} and {j{Email}}: one name, so one parameter.
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
+            "SELECT {{Email}} AS a, {j{Email}} AS b", NamesBody, JsonBodyPattern);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("a@b.c", (string)row.a);
+        Assert.Equal("a@b.c", (string)row.b);
+        AssertParameterNames(command, 1);
+    }
+
+    [Theory]
+    [InlineData("@type", "admin")]
+    [InlineData("price (€)", "5 EUR")]
+    [InlineData("prénom", "Zoé")]
+    public async Task ExecuteQueryAsync_NameWithAnyCharacters_GetsAValidParameterName(string name, string expected)
+    {
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync($"SELECT {{{{{name}}}}} AS v", NamesBody);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(expected, (string)row.v);
+        AssertParameterNames(command, 1);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_GeneratedNameAlreadyTaken_GetsTheNextFreeSuffix()
+    {
+        // Names are given left to right. "a-b" cleans to the name "a_b" has, and its first suffixed name
+        // is the one "a_b_2" already has, so it gets _3.
+        var queryParams = new Dictionary<string, object> { ["a_b"] = "1", ["a-b"] = "2", ["a_b_2"] = "3" };
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
+            "SELECT {{a_b}} AS x, {{a_b_2}} AS z, {{a-b}} AS y", queryParams);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("1", (string)row.x);
+        Assert.Equal("2", (string)row.y);
+        Assert.Equal("3", (string)row.z);
+        AssertParameterNames(command, 3);
+        Assert.Equal(new[] { "@vxv_1_a_b", "@vxv_1_a_b_2", "@vxv_1_a_b_3" },
+            command.Parameters.Cast<DbParameter>().Select(p => p.ParameterName));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ShortNameEqualToALongNamesReplacement_StaysUnique()
+    {
+        // A name longer than MaxParameterNameLength is replaced by lp_vxv_long_name_N, which a short
+        // placeholder can be named too.
+        var longName = new string('l', 40);
+        var queryParams = new Dictionary<string, object> { ["lp_vxv_long_name_1"] = "short", [longName] = "long" };
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
+            $"SELECT {{{{lp_vxv_long_name_1}}}} AS s, {{{{{longName}}}}} AS l", queryParams);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("short", (string)row.s);
+        Assert.Equal("long", (string)row.l);
+        AssertParameterNames(command, 2);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_TemplateWithoutCount_NamesStayUnique()
+    {
+        // Without {{ParameterCount}}, two sets' placeholders with the same name would get the same SQL name.
+        AdoNetExt.DefaultParameterTemplate = "{{DefaultParameterPrefix}}{{ParameterName}}";
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "curly" } },
+            new() { DataModel = new { x = "square" }, QueryParamsRegex = @"(?<open_marker>\[\[)(?<param>.*?)?(?<close_marker>\]\])" }
+        };
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync("SELECT {{x}} AS a, [[X]] AS b", queryParamsList);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("curly", (string)row.a);
+        Assert.Equal("square", (string)row.b);
+        AssertParameterNames(command, 2);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_TemplateWithoutParameterName_NamesStayUnique()
+    {
+        // Every placeholder of a set gets the same generated name, so the suffixes tell them apart.
+        AdoNetExt.DefaultParameterTemplate = "{{DefaultParameterPrefix}}p{{ParameterCount}}";
+        using var command = _connection.CreateCommand();
+        var run = Task.Run(async () =>
+        {
+            await using var result = await command.ExecuteQueryAsync(
+                "SELECT {{a}} AS a, {{b}} AS b, {{c}} AS c", new { a = "1", b = "2" });
+            return await SingleRowAsync(result);
+        });
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30))));
+
+        var row = await run;
+        Assert.Equal("1", (string)row.a);
+        Assert.Equal("2", (string)row.b);
+        Assert.Null(row.c);
+        Assert.Equal(new[] { "@p1", "@p1_2", "@p1_3" },
+            command.Parameters.Cast<DbParameter>().Select(p => p.ParameterName));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_SetsWithOnePattern_AreMerged_TheLaterValueWinningEvenWhenNull()
+    {
+        // Both sets use the default pattern, so they are one set: the later one's null is the value.
+        // Under a pattern of its own, the later set's null would leave {{x}} to the earlier set.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "earlier", y = "earlier" } },
+            new() { DataModel = new Dictionary<string, object?> { ["x"] = null } }
+        };
+        await using var result = await _connection.ExecuteQueryAsync("SELECT {{x}} AS x, {{y}} AS y", queryParamsList);
+
+        var row = await SingleRowAsync(result);
+        Assert.Null(row.x);
+        Assert.Equal("earlier", (string)row.y);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_SetsWithOnePattern_AreReadInThePlaceOfTheLastOfThem()
+    {
+        // The first and third sets share a pattern, so they are one set, read in the third's place:
+        // before the second set, whose value for {{x}} it therefore beats.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "first" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { x = "second" }, QueryParamsRegex = QueryStringPattern },
+            new() { DataModel = new Dictionary<string, object>(), QueryParamsRegex = JsonBodyPattern }
+        };
+        await using var result = await _connection.ExecuteQueryAsync("SELECT {{x}} AS x", queryParamsList);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("first", (string)row.x);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PlaceholderAnotherSetResolves_GetsNoNullParameter()
+    {
+        // The query-string set is read first and has no "name", so {{name}} is left for the JSON set,
+        // which has it. The command gets that one parameter and no unused NULL one.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { name = "John" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new Dictionary<string, object>(), QueryParamsRegex = QueryStringPattern }
+        };
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
+            "SELECT name FROM Users WHERE name = {{name}}", queryParamsList);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("John", (string)row.name);
+        AssertParameterNames(command, 1);
+    }
+
+    [Theory]
+    [InlineData("SELECT {{id}} AS a, '{{' AS lit, {{id}} AS b")]
+    [InlineData("SELECT {{id}} AS a, '{{' AS lit, {{ID}} AS b")]
+    [InlineData("SELECT {{id}} AS a /* {{ */, {{id}} AS b")]
+    public async Task ExecuteQueryAsync_StrayOpenMarkerBeforeASecondUse_BindsBoth(string query)
+    {
+        // The pattern pairs the stray "{{" with the second {{id}}'s "}}", so that {{id}} is not a match of
+        // its own: it is bound by its text, as the first {{id}} is.
+        await using var result = await _connection.ExecuteQueryAsync(query, new { id = 7 });
+
+        var row = (IDictionary<string, object?>)await SingleRowAsync(result);
+        Assert.Equal(7L, row["a"]);
+        Assert.Equal(7L, row["b"]);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PipeDelimitersBesideAPipeOperator_BindBothUses()
+    {
+        // The pattern pairs the operator's pipe with the second |a|'s opening pipe, so that |a| is no
+        // match of its own: its text is bound, as the first |a| is.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT |a| | 4 AS x, |a| AS y", new { a = 1 }, @"(?<open_marker>\|)(?<param>.*?)?(?<close_marker>\|)");
+
+        var row = (IDictionary<string, object?>)await SingleRowAsync(result);
+        Assert.Equal(5L, row["x"]);
+        Assert.Equal(1L, row["y"]);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PatternThatAlsoMatchesTheCharacterBefore_KeepsIt()
+    {
+        // The pattern takes the character before the marker too (an escape check without a lookbehind):
+        // the "(" and the "," stay, and only the placeholders become parameters.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT 1 AS n WHERE 'b' IN({{a}},{{b}})", new { a = "a", b = "b" },
+            @"(?:^|[^\\])(?<open_marker>\{\{)(?<param>.*?)(?<close_marker>\}\})");
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(1L, (long)row.n);
+    }
+
+    // A colon-style placeholder with no close marker, which also takes the character before the colon,
+    // so that a PostgreSQL :: cast is not a placeholder.
+    private const string ColonPattern = @"(?:^|[^:])(?<open_marker>:)(?<param>\w+)(?<close_marker>)";
+
+    [Theory]
+    [InlineData("SELECT 1 AS v WHERE 'b' IN(:a,:b)", 1L)]
+    [InlineData("SELECT -:c AS v", -3L)]
+    public async Task ExecuteQueryAsync_PatternWithOnlyAnOpenMarker_KeepsTheCharacterBefore(string query, long expected)
+    {
+        await using var result = await _connection.ExecuteQueryAsync(query, new { a = "a", b = "b", c = 3 }, ColonPattern);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(expected, (long)row.v);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PatternWithOnlyAnOpenMarker_NullThatBeginsWithAResolvedName_KeepsTheCharacterBefore()
+    {
+        // ":ab" has no value and begins with the resolved ":a"; its NULL keeps the "(" the pattern
+        // matched before the colon.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT :a AS x, coalesce(:ab, 0) AS y", new { a = 1 }, ColonPattern);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(1L, (long)row.x);
+        Assert.Equal(0L, (long)row.y);
+    }
+
+    [Theory]
+    [InlineData("SELECT :a AS x, 1-:a AS y")]
+    [InlineData("SELECT :a AS x, 1-:A AS y")]
+    public async Task ExecuteQueryAsync_PatternWithOnlyAnOpenMarker_UseThePatternSkips_IsBoundByItsText(string query)
+    {
+        // The pattern allows only a space, "(", "," or "=" before the colon, so it skips "-:a"; the
+        // placeholder's text binds that use too, written in any case.
+        await using var result = await _connection.ExecuteQueryAsync(
+            query, new { a = 1 }, @"(?:^|[\s(,=])(?<open_marker>:)(?<param>\w+)");
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(1L, (long)row.x);
+        Assert.Equal(0L, (long)row.y);
+    }
+
+    [Theory]
+    [InlineData("SELECT a$ AS x, 1-a$ AS y")]
+    [InlineData("SELECT a$ AS x, 1-A$ AS y")]
+    public async Task ExecuteQueryAsync_PatternWithOnlyACloseMarker_UseThePatternSkips_IsBoundByItsText(string query)
+    {
+        // The pattern allows only a space, "(", "," or "=" before the name, so it skips "-a$"; the
+        // placeholder's text binds that use too, written in any case.
+        await using var result = await _connection.ExecuteQueryAsync(
+            query, new { a = 1 }, @"(?:^|[\s(,=])(?<param>\w+)(?<close_marker>\$)");
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(1L, (long)row.x);
+        Assert.Equal(0L, (long)row.y);
+    }
+
+    [Theory]
+    [InlineData("SELECT a$ AS x, coalesce(ba$, 0) AS y")]
+    [InlineData("SELECT a$ AS x, coalesce(éa$, 0) AS y")]
+    [InlineData("SELECT a$ AS x, coalesce(1a$, 0) AS y")]
+    [InlineData("SELECT a$ AS x, coalesce(Ba$, 0) AS y")]
+    public async Task ExecuteQueryAsync_PatternWithOnlyACloseMarker_NameThatEndsALongerName_LeavesItAlone(string query)
+    {
+        // "a$" is also the end of "ba$", "éa$", "1a$" and "Ba$", which have no value: binding a$ by its
+        // text must not reach into them (a name character is any letter or digit, not only ASCII).
+        await using var result = await _connection.ExecuteQueryAsync(
+            query, new { a = 1 }, @"(?<param>\w+)(?<close_marker>\$)");
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(1L, (long)row.x);
+        Assert.Equal(0L, (long)row.y);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PatternWithOnlyAnOpenMarker_NameThatBeginsALongerName_LeavesItAlone()
+    {
+        // ":name" is also the start of ":name_ar" and ":nameé", which have no value (a name character is
+        // any letter, not only an ASCII one).
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT :name AS x, :name_ar AS y, :nameé AS z", new { name = "n" }, ColonPattern);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("n", (string)row.x);
+        Assert.Null(row.y);
+        Assert.Null(row.z);
+    }
+
+    [Theory]
+    [InlineData("SELECT :p1 AS x, coalesce(:p10, 0) AS y")]
+    [InlineData("SELECT :user AS x, coalesce(:userId, 0) AS y")]
+    public async Task ExecuteQueryAsync_PatternWithOnlyAnOpenMarker_NameThatBeginsANumberedOrCamelCaseName_LeavesItAlone(string query)
+    {
+        // ":p10" and ":userId" have no value; ":p1" and ":user" must not reach into them.
+        await using var result = await _connection.ExecuteQueryAsync(
+            query, new Dictionary<string, object> { ["p1"] = 1, ["user"] = 1 }, ColonPattern);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(1L, (long)row.x);
+        Assert.Equal(0L, (long)row.y);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PatternWithOnlyAnOpenMarker_NullUseThePatternSkips_StaysAsWritten()
+    {
+        // The pattern skips ":token" in the literal; token has no value, so only its match becomes NULL.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT 'session:token' AS label, :token AS t",
+            new { a = 1 }, @"(?:^|[\s(,=])(?<open_marker>:)(?<param>\w+)");
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("session:token", (string)row.label);
+        Assert.Null(row.t);
+    }
+
+    [Fact]
+    public void BuildPositional_PatternWithOnlyAnOpenMarker_UseThePatternSkips_StaysAsWritten()
+    {
+        // ODBC and OleDb replace only the pattern's matches; the named path also binds "1-:a" by its text.
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT :a AS x, 1-:a AS y", MakeQueryParams(new { a = 1 }, @"(?:^|[\s(,=])(?<open_marker>:)(?<param>\w+)"));
+
+        Assert.Equal("SELECT ? AS x, 1-:a AS y", query);
+        Assert.Equal(new[] { ("a", (object?)1) }, paramList);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PatternThatAlsoMatchesTheCharacterAfter_KeepsIt_ForANull()
+    {
+        // The pattern takes the "," or ")" after the name too; x has no value.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT coalesce(:x, 0) AS v", new { a = 1 }, @"(?<open_marker>:)(?<param>\w+)(?:,|\))");
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(0L, (long)row.v);
+    }
+
+    [Theory]
+    [InlineData("SELECT -:c AS v", "SELECT -? AS v", ColonPattern)]
+    [InlineData("SELECT 1 WHERE 'b' IN({{a}},{{b}})", "SELECT 1 WHERE 'b' IN(?,?)", @"(?:^|[^\\])(?<open_marker>\{\{)(?<param>.*?)(?<close_marker>\}\})")]
+    [InlineData("SELECT 1 WHERE 'b' IN(:a,:b)", "SELECT 1 WHERE 'b' IN(?,?)", @"(?<open_marker>:)(?<param>\w+)(?:,|\))")]
+    [InlineData("SELECT coalesce(a$, 0)", "SELECT coalesce(?, 0)", @"(?:^|[(,\s])(?<param>\w+)(?<close_marker>\$)")]
+    public void BuildPositional_PatternThatAlsoMatchesTextAroundThePlaceholder_KeepsIt(string query, string expected, string pattern)
+    {
+        var (transformed, _) = AdoNetExt.BuildPositionalParameters(query, MakeQueryParams(new { a = "a", b = "b", c = 3 }, pattern));
+
+        Assert.Equal(expected, transformed);
+    }
+
+    [Theory]
+    [InlineData("SELECT '{{' AS s, {{a}} AS x, {{a}} AS y, :b AS z")]
+    [InlineData("SELECT '{{' AS s, {{a}} AS x, {{A}} AS y, :b AS z")]
+    public async Task ExecuteQueryAsync_PatternMixingTwoAndOneMarkerAlternatives_StrayOpenMarker_BindsBoth(string query)
+    {
+        // The pattern has a {{name}} and a :name alternative; the {{name}} uses are bound by their text,
+        // in any case, as with a {{name}}-only pattern, though :b is there too.
+        await using var result = await _connection.ExecuteQueryAsync(
+            query, new { a = 1, b = 2 },
+            @"(?<open_marker>\{\{)(?<param>.*?)(?<close_marker>\}\})|(?<open_marker>:)(?<param>\w+)");
+
+        var row = (IDictionary<string, object?>)await SingleRowAsync(result);
+        Assert.Equal("{{", row["s"]);
+        Assert.Equal(1L, row["x"]);
+        Assert.Equal(1L, row["y"]);
+        Assert.Equal(2L, row["z"]);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PatternWithOnlyAnOpenMarker_TextComparedAsNames()
+    {
+        // ":STRAẞE" is not ":straße" ignoring case the way names are compared (ordinal), so it has no
+        // value; a culture-aware comparison would treat ẞ as ß and bind it to straße's value.
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT :straße AS a, :STRAẞE AS b", new Dictionary<string, object> { ["straße"] = 1 },
+            @"(?<open_marker>:)(?<param>\w+)");
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(1L, (long)row.a);
+        Assert.Null(row.b);
+    }
+
+    private const string NoMarkerGroupsPattern = @"\{\{(?<param>\w+)\}\}";
+    private const string EscapablePattern = @"(?<!\\)(?<open_marker>\{\{)(?<param>\w+)(?<close_marker>\}\})";
+
+    [Fact]
+    public async Task ExecuteQueryAsync_PatternWithoutMarkerGroups_BindsOnlyItsMatches()
+    {
+        // Without open_marker and close_marker groups, a placeholder's text is its bare name, which is
+        // also the column's name here, and part of {{username}}, which has no value: only the pattern's
+        // matches are parameters.
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync(
+            "SELECT name FROM Users WHERE name = {{name}} AND {{username}} IS NULL", new { name = "Jane" }, NoMarkerGroupsPattern);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("Jane", (string)row.name);
+        Assert.StartsWith("SELECT name FROM Users WHERE name = @", command.CommandText);
+    }
+
+    [Fact]
+    public void BuildPositional_PatternWithoutMarkerGroups_ReplacesOnlyItsMatches()
+    {
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "DELETE FROM Users WHERE name = {{name}}", MakeQueryParams(new { name = "Jane" }, NoMarkerGroupsPattern));
+
+        Assert.Equal("DELETE FROM Users WHERE name = ?", query);
+        Assert.Equal(new[] { ("name", (object?)"Jane") }, paramList);
+    }
+
+    [Fact]
+    public void BuildPositional_MarkerThePatternDoesNotMatch_StaysAsWritten()
+    {
+        // The pattern skips an escaped marker, so its text stays, though {{name}} has a value.
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            @"SELECT '\{{name}}' AS lit, {{name}} AS v", MakeQueryParams(new { name = "Jane" }, EscapablePattern));
+
+        Assert.Equal(@"SELECT '\{{name}}' AS lit, ? AS v", query);
+        Assert.Equal(new[] { ("name", (object?)"Jane") }, paramList);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_SourceSpecificMarkers_TakeOnlyTheirSetsValue()
+    {
+        // The later set (query string) wins {{x}}; {j{x}} is only the JSON pattern's, {qs{x}} only the query string's.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "body" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { x = "query" }, QueryParamsRegex = QueryStringPattern }
+        };
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT {{x}} AS a, {j{x}} AS b, {qs{x}} AS c", queryParamsList);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("query", (string)row.a);
+        Assert.Equal("body", (string)row.b);
+        Assert.Equal("query", (string)row.c);
     }
 
     #endregion
@@ -1097,6 +1640,69 @@ public class AdoNetExtTests : IDisposable
         Assert.Equal(35, paramList[1].Value);
     }
 
+    [Fact]
+    public void BuildPositional_PlaceholderMatchedBySeveralPatterns_IsReplacedOnce()
+    {
+        // Both patterns match {{name}}. It used to be replaced once per pattern at the same position,
+        // which cut into the text after it ("name = ? = 1"), and bound the value twice.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { name = "John" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new Dictionary<string, object>(), QueryParamsRegex = QueryStringPattern }
+        };
+
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT * FROM Users WHERE name = {{name}} AND id = 1", queryParamsList);
+
+        Assert.Equal("SELECT * FROM Users WHERE name = ? AND id = 1", query);
+        Assert.Equal(new[] { ("name", (object?)"John") }, paramList);
+    }
+
+    [Fact]
+    public void BuildPositional_SourceSpecificMarkers_TakeOnlyTheirSetsValue()
+    {
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "body" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { x = "query" }, QueryParamsRegex = QueryStringPattern }
+        };
+
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT {{x}} AS a, {j{x}} AS b, {qs{x}} AS c", queryParamsList);
+
+        Assert.Equal("SELECT ? AS a, ? AS b, ? AS c", query);
+        Assert.Equal(new object?[] { "query", "body", "query" }, paramList.Select(p => p.Value));
+    }
+
+    [Fact]
+    public void BuildPositional_NullInTheLaterSet_LeavesThePlaceholderToTheEarlierSet()
+    {
+        // As on the named path: a set whose value is null doesn't claim the placeholder.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "query" }, QueryParamsRegex = QueryStringPattern },
+            new() { DataModel = new Dictionary<string, object?> { ["x"] = null }, QueryParamsRegex = JsonBodyPattern }
+        };
+
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters("SELECT {{x}} AS a", queryParamsList);
+
+        Assert.Equal("SELECT ? AS a", query);
+        Assert.Equal(new[] { ("x", (object?)"query") }, paramList);
+    }
+
+    [Fact]
+    public void BuildPositional_QueryWithPrivateUseCharacters_KeepsThem()
+    {
+        // Placeholders are marked internally with a private-use character the query doesn't contain:
+        // here the first two are in it, the first around a 0 the way a placeholder's mark would be.
+        var (query, paramList) = AdoNetExt.BuildPositionalParameters(
+            "SELECT '\uE0000\uE000' AS a, '\uE001' AS b, {{x}} AS c",
+            MakeQueryParams(new { x = 7 }));
+
+        Assert.Equal("SELECT '\uE0000\uE000' AS a, '\uE001' AS b, ? AS c", query);
+        Assert.Equal(new[] { ("x", (object?)7) }, paramList);
+    }
+
     #endregion
 
     #region Statements After The First Result Set
@@ -1173,6 +1779,28 @@ public class AdoNetExtTests : IDisposable
 
         using var next = _connection.ExecuteQuery("SELECT name FROM Users WHERE id = 2");
         Assert.Equal("Jane", (string)next.First().name);
+    }
+
+    private const string ErrorAfterRows = "SELECT name FROM Users ORDER BY id; SELECT * FROM missing_table;";
+
+    [Fact]
+    public void ReadingThatThrows_ClosesTheReader()
+    {
+        using var result = _connection.ExecuteQuery(ErrorAfterRows);
+
+        Assert.Throws<SqliteException>(() => result.ToList());
+
+        Assert.True(result.Reader!.IsClosed);
+    }
+
+    [Fact]
+    public async Task ReadingAgainAfterTheEnd_Throws()
+    {
+        // The reader closed when the rows ran out, so a second read finds it closed.
+        await using var result = await _connection.ExecuteQueryAsync("SELECT name FROM Users");
+        await foreach (var _ in result) { }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => { await foreach (var _ in result) { } });
     }
 
     #endregion
@@ -1319,7 +1947,9 @@ public class OdbcAccessIntegrationTests : IDisposable
 
     public OdbcAccessIntegrationTests()
     {
-        var dbPath = Path.Combine(AppContext.BaseDirectory, "sample.accdb");
+        // Next to the test assembly: on .NET Framework, with app domains off (Tests.Net481's
+        // xunit.runner.json), AppContext.BaseDirectory is the test host's folder instead.
+        var dbPath = Path.Combine(Path.GetDirectoryName(typeof(OdbcAccessIntegrationTests).Assembly.Location)!, "sample.accdb");
         if (!File.Exists(dbPath)) { _canRun = false; return; }
 
         try
@@ -1395,6 +2025,27 @@ public class OdbcAccessIntegrationTests : IDisposable
 
         Assert.Single(rows);
         Assert.Equal("Alice", (string)rows[0].Name);
+    }
+
+    [Fact]
+    public void Odbc_PlaceholderMatchedBySeveralPatterns_IsBoundOnce()
+    {
+        if (!_canRun) return;
+
+        // Both patterns match {{Name}}, as a JSON body's and a query string's do in an application
+        // that reads both.
+        var queryParamsList = new List<DbQueryParams>
+        {
+            new() { DataModel = new { Name = "Bob" }, QueryParamsRegex = @"(?<open_marker>\{\{|\{j\{)(?<param>.*?)?(?<close_marker>\}\})" },
+            new() { DataModel = new Dictionary<string, object>(), QueryParamsRegex = @"(?<open_marker>\{\{|\{qs\{)(?<param>.*?)?(?<close_marker>\}\})" }
+        };
+
+        using var result = _connection!.ExecuteQuery(
+            "SELECT * FROM TestTable WHERE Name = {{Name}} AND Id > 0", queryParamsList);
+        var rows = result.ToList();
+
+        Assert.Single(rows);
+        Assert.Equal("Bob", (string)rows[0].Name);
     }
 
     [Fact]

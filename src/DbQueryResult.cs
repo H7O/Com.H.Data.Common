@@ -12,9 +12,12 @@ namespace Com.H.Data.Common;
 /// <typeparam name="T">The type of objects in the query result. Use 'dynamic' for flexible schema or a specific type for strongly-typed results.</typeparam>
 /// <remarks>
 /// This class wraps an IAsyncEnumerable and provides synchronous enumeration via IEnumerable&lt;T&gt;.
-/// It manages the lifecycle of the underlying DbDataReader and optionally the DbConnection.
-/// When disposed, it automatically closes and disposes the reader and connection (if closeConnectionOnDispose was true).
-/// User maintains full control over when to dispose resources via the using statement or explicit disposal.
+/// The reader closes by itself once its rows are read to the end, when an enumeration stops early
+/// (First, FirstOrDefault, Take, a foreach left with break) and when reading throws, so another query can then
+/// run on the same connection. It stays open while you hold an enumerator part-way through the rows, and for a
+/// result you haven't enumerated: CloseReader closes it then.
+/// Disposing the result closes the reader if it is still open, disposes the command the library created for the
+/// query, and closes the connection if closeConnectionOnExit was true.
 /// </remarks>
 /// <example>
 /// <code>
@@ -23,7 +26,7 @@ namespace Com.H.Data.Common;
 /// {
 ///     Console.WriteLine(row.Name);
 /// }
-/// // Reader and connection (if specified) are automatically disposed here
+/// // The reader closed when the foreach finished; the result is disposed here
 /// </code>
 /// </example>
 public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
@@ -50,13 +53,17 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	}
 
 	// Internal properties for accessing the reader, command and connection
+	/// <summary>
+	/// The DbDataReader the rows are read from. It closes by itself once its rows are read to the end or an
+	/// enumeration stops early (see the class remarks), so check IsClosed before using it.
+	/// </summary>
 	public DbDataReader? Reader => _reader;
 	internal DbCommand? Command => _command;
 	internal DbConnection? Connection => _connection;
 
 	/// <summary>
 	/// Returns the underlying async enumerable for asynchronous iteration.
-	/// Resources (reader and connection) remain open until this DbQueryResult is disposed.
+	/// The reader closes once its rows are read to the end or an enumeration stops early (see the class remarks).
 	/// Use this when you need to pass the enumerable to methods that expect IAsyncEnumerable&lt;T&gt;.
 	/// </summary>
 	/// <returns>The underlying IAsyncEnumerable&lt;T&gt; that yields query results</returns>
@@ -74,7 +81,7 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 
 	/// <summary>
 	/// Returns a blocking (synchronous) enumerable from the async enumerable.
-	/// Resources (reader and connection) remain open until this DbQueryResult is disposed.
+	/// The reader closes once its rows are read to the end or an enumeration stops early (see the class remarks).
 	/// This is the default enumerable used when iterating with foreach.
 	/// </summary>
 	/// <returns>A blocking IEnumerable&lt;T&gt; that yields query results synchronously</returns>
@@ -104,16 +111,20 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
 	/// <summary>
-	/// Closes the underlying DbDataReader asynchronously without disposing the entire result.
-	/// Use this when you want to close the reader early (e.g., after reading first few results)
-	/// to allow executing another query on the same connection.
+	/// Closes the underlying DbDataReader asynchronously without disposing the entire result,
+	/// so another query can run on the same connection.
+	/// The reader already closes by itself once its rows are read to the end or an enumeration stops early
+	/// (First, FirstOrDefault, Take, a foreach left with break), so this is needed only for a result you
+	/// haven't enumerated, or while you hold an enumerator part-way through the rows.
+	/// It does nothing when the reader is already closed.
 	/// </summary>
 	/// <returns>A task representing the asynchronous close operation</returns>
 	/// <example>
 	/// <code>
 	/// using var result = connection.ExecuteQuery("SELECT * FROM Users");
-	/// var firstUser = result.FirstOrDefault();
-	/// await result.CloseReaderAsync(); // Close reader to execute another query on same connection
+	/// using var users = result.GetEnumerator();
+	/// users.MoveNext(); // the reader stays open while this enumerator is held
+	/// await result.CloseReaderAsync(); // another query can now run on this connection
 	/// </code>
 	/// </example>
 	public async ValueTask CloseReaderAsync()
@@ -125,15 +136,19 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	}
 
 	/// <summary>
-	/// Closes the underlying DbDataReader synchronously without disposing the entire result.
-	/// Use this when you want to close the reader early (e.g., after reading first few results)
-	/// to allow executing another query on the same connection.
+	/// Closes the underlying DbDataReader synchronously without disposing the entire result,
+	/// so another query can run on the same connection.
+	/// The reader already closes by itself once its rows are read to the end or an enumeration stops early
+	/// (First, FirstOrDefault, Take, a foreach left with break), so this is needed only for a result you
+	/// haven't enumerated, or while you hold an enumerator part-way through the rows.
+	/// It does nothing when the reader is already closed.
 	/// </summary>
 	/// <example>
 	/// <code>
 	/// using var result = connection.ExecuteQuery("SELECT * FROM Users");
-	/// var firstUser = result.FirstOrDefault();
-	/// result.CloseReader(); // Close reader to execute another query on same connection
+	/// using var users = result.GetEnumerator();
+	/// users.MoveNext(); // the reader stays open while this enumerator is held
+	/// result.CloseReader(); // another query can now run on this connection
 	/// </code>
 	/// </example>
 	public void CloseReader()
@@ -142,8 +157,8 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	}
 
 	/// <summary>
-	/// Asynchronously disposes the DbQueryResult, closing and disposing the underlying DbDataReader.
-	/// If closeConnectionOnDispose was set to true during creation, also ensures the DbConnection is closed.
+	/// Asynchronously disposes the DbQueryResult: closes the reader if it is still open and disposes the command
+	/// the library created for the query. If closeConnectionOnExit was true, also closes the DbConnection.
 	/// This method is called automatically when using 'await using' statement.
 	/// </summary>
 	/// <returns>A task representing the asynchronous dispose operation</returns>
@@ -178,8 +193,8 @@ public class DbQueryResult<T> : IEnumerable<T>, IAsyncDisposable, IDisposable
 	}
 
 	/// <summary>
-	/// Synchronously disposes the DbQueryResult, closing and disposing the underlying DbDataReader.
-	/// If closeConnectionOnDispose was set to true during creation, also ensures the DbConnection is closed.
+	/// Synchronously disposes the DbQueryResult: closes the reader if it is still open and disposes the command
+	/// the library created for the query. If closeConnectionOnExit was true, also closes the DbConnection.
 	/// This method is called automatically when using 'using' statement.
 	/// Internally calls DisposeAsync() synchronously.
 	/// </summary>

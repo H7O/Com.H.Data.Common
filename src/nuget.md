@@ -1,5 +1,5 @@
 # Com.H.Data.Common
-Run SQL on any ADO.NET connection and get the rows back as **strongly typed objects** (`ExecuteQuery<T>`, `ExecuteQueryAsync<T>`) or as **dynamic objects** (`ExecuteQuery`, `ExecuteQueryAsync`), streamed as `IEnumerable<T>` or `IAsyncEnumerable<T>`. The methods extend `DbConnection` and `DbCommand`, and `ExecuteCommand` / `ExecuteCommandAsync` run statements that return no rows. Parameters written as `{{name}}` are always sent as real database parameters, never concatenated into the SQL.
+Run SQL on any ADO.NET connection and get the rows back as **strongly typed objects** (`ExecuteQuery<T>`, `ExecuteQueryAsync<T>`) or as **dynamic objects** (`ExecuteQuery`, `ExecuteQueryAsync`), streamed as `IEnumerable<T>` or `IAsyncEnumerable<T>`. The methods extend `DbConnection` and `DbCommand`, and `ExecuteCommand` / `ExecuteCommandAsync` run statements that return no rows. Parameters written as `{{name}}` are always sent as real database parameters, never concatenated into the SQL. Their names can hold any characters, so a JSON body's keys work as they are (`{{first name}}`, `{{e-mail}}`). An error the database raises after the rows (SQL Server's `THROW` after a `SELECT`) is thrown to you when you read the rows to their end; stopping earlier (`First`, `FirstOrDefault`, `Take`, a `foreach` left with `break`) can lose it.
 
 Works with **every ADO.NET database** — SQL Server, PostgreSQL, MySQL, SQLite, Oracle, ODBC, OleDb, and more. ODBC/OleDb databases that normally require positional `?` parameters are transparently given the same friendly `{{named}}` parameter syntax, so you write one style of query for all providers.
 
@@ -19,6 +19,44 @@ The package ships builds for:
 | `netstandard2.0` | .NET Framework 4.6.1+ (including 4.8.1), .NET Core 2.0+, Mono 5.4+, Xamarin, Unity, UWP |
 
 The full feature set — including `IAsyncEnumerable<dynamic>`, `IAsyncDisposable`, `await foreach`, typed-generic queries via `ExecuteQuery<T>`, nested JSON/XML parsing, and the named-parameter transform for ODBC/OleDb — is available on **every** target, including .NET Standard 2.0. Legacy .NET Framework 4.x consumers get the same async streaming API as .NET 10 consumers.
+
+## Parameters
+
+Write `{{name}}` in the SQL wherever a value goes. Each one is sent as a real database parameter (`@vxv_1_name` on SQL Server, `:vxv_1_name` on Oracle, `?` on ODBC and OleDb), so a value is never part of the SQL text.
+
+- **Values** come from an anonymous object, an object's public properties, an `IDictionary<string, object>`, a `System.Text.Json.JsonElement` or JSON text. A JSON object's top-level keys are the names: a string arrives as `string`, a number as `double`, `true` and `false` as `bool`, and a nested object or array as its JSON text.
+- **Names can hold any characters** except a line break and `}}`, and can't end with `}` (the closing `}}` would start there), so a JSON body's keys work as they are: `{{first name}}`, `{{e-mail}}`, `{{prénom}}`. Spaces count too: `{{ name }}` is named ` name `, not `name`. The name you write is independent of the SQL parameter's name, which keeps only ASCII letters, digits and underscores and is made unique. You never rename an input to suit the database.
+- **Names are matched ignoring case**: `{{Email}}` and `{{email}}` are the same value and one parameter. A name used several times is one parameter too (on ODBC and OleDb, one `?` per use, each bound to that value).
+- **A missing or null value is `NULL`**: the query still runs, so test an optional input with `IS NULL`. This needs a parameters object, even an empty one (`new { }`): called without one (or with `null`), the SQL is sent as written, `{{name}}` included, and fails.
+- **Other delimiters**: pass a regular expression with the groups `open_marker`, `param` and `close_marker`, such as `(?<open_marker>\[\[)(?<param>.*?)?(?<close_marker>\]\])` for `[[name]]`.
+- **Several sources**: pass a `List<DbQueryParams>`, each with its own `DataModel` and `QueryParamsRegex`. A placeholder takes its value from the last source in the list whose pattern matches it and whose value isn't null. So a marker only one pattern matches (`{qs{city}}` below) reads only that source, and one several patterns match (`{{first name}}`) falls back to an earlier source when a later one has no value. Sources with the same pattern string are merged into one before that, which takes the place of the last of them in the list: for a name both have, the later source's value is used even when it is null. So give a source its own pattern when its nulls should fall back, or when it must not move past the sources listed between it and another source with its pattern.
+
+```csharp
+using Com.H.Data.Common;
+using System.Text.Json;
+
+// A request body, passed as it arrives: no DTO, no renamed keys.
+var body = JsonDocument.Parse("""
+    { "first name": "Ann", "e-mail": "ann@example.com", "age": 31 }
+    """).RootElement;
+
+await dc.ExecuteCommandAsync(@"
+    INSERT INTO people (first_name, email, age)
+    VALUES ({{first name}}, {{e-mail}}, {{age}})", body);
+
+// The same body together with a query string.
+var queryString = new Dictionary<string, object> { ["city"] = "Lisbon" };
+var sources = new List<DbQueryParams>
+{
+    new() { DataModel = body, QueryParamsRegex = @"(?<open_marker>\{\{|\{j\{)(?<param>.*?)?(?<close_marker>\}\})" },
+    new() { DataModel = queryString, QueryParamsRegex = @"(?<open_marker>\{\{|\{qs\{)(?<param>.*?)?(?<close_marker>\}\})" },
+};
+// {{first name}} comes from the body, because the query string has no value for it.
+// {j{age}} reads only the body, and {qs{city}} only the query string.
+await using var people = await dc.ExecuteQueryAsync(@"
+    SELECT * FROM people
+    WHERE first_name = {{first name}} AND age >= {j{age}} AND city = {qs{city}}", sources);
+```
 
 ## Sample 1
 This sample demonstrates how to execute a simple query without parameters on a SQL Server Database.
@@ -96,7 +134,8 @@ using var result = dc.ExecuteQuery(@"
 );
 // ^ note the use of curly braces around the parameter name in the query. 
 // This is a special syntax that allows you to pass parameters to your query.
-// The parameter name must match the property name in the queryParams object.
+// The parameter name is matched to the queryParams object's property names ignoring case
+// (see Parameters above).
 // It also protects you from SQL injection attacks and is configurable to use other 
 // delimiters by passing a regular expression 
 // Also note the use of 'using' keyword to ensure proper disposal of database resources
@@ -175,28 +214,43 @@ In our example above, we are filling the property `phones` with JSON string. Hen
 > **Note**: Another syntax for parsing XML string is `{type{xml{your_property_name}}}`.
 
 ## Sample 4
-This sample demonstrates how to close a reader if you're using `ExecuteQuery` or `ExecuteQueryAsync` and partially retrieving records (e.g., using `.FirstOrDefault()` or `.Take(n)`) and wants to execute
-another query on the same connection while the reader is still open on the first query (i.e., items of the first query are still being enumerated).
-In such cases, without closing the reader of the first query, the second query will throw an exception indicating `There is already an open DataReader associated with this Connection which must be closed first`.
+This sample shows when a reader is still open, and how to close it before you run another query on the same connection.
 
+A reader stays open while its rows are being read (an enumerator you hold, or a `foreach` that is still running) and for a result you haven't read. On SQL Server without MARS, and on other databases that allow one open reader per connection, another query on that connection then throws `There is already an open DataReader associated with this Connection which must be closed first`. Reading the rows to their end closes the reader, and so does an enumerator disposed before the end (`First`, `FirstOrDefault`, `Take`, a `foreach` left with `break`). To close it yourself, dispose the result or call `CloseReader`.
 
 ```csharp
-using Com.H.Data.Common; 
+using Com.H.Data.Common;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
-using System.Linq;
 
 string conStr = @"your connection string goes here";
 using DbConnection dc = new SqlConnection(conStr);
 // ^ note the use of 'using' keyword to ensure proper disposal of the connection
 
 using var result = dc.ExecuteQuery("SELECT * FROM Users");
-var firstUser = result.FirstOrDefault();
+using var users = result.GetEnumerator();
+users.MoveNext(); // the reader stays open while this enumerator is held
 
-result.Dispose(); // Closes any open reader on `dc`
+result.CloseReader(); // closes the reader; disposing the result does too
 
-using var anotherResult = dc.ExecuteQuery("SELECT * FROM Orders"); // Safe! No reader exception from previous query
+using var anotherResult = dc.ExecuteQuery("SELECT * FROM Orders"); // Safe! No reader is open on dc
 // ^ note the use of 'using' keyword to ensure proper disposal of database resources
+```
+
+### Errors raised after the rows you read
+
+Only the first result set's rows are returned. Reading them to the end also moves through the rest of the batch, so an error raised after them (SQL Server's `THROW` or `RAISERROR` after a `SELECT`, or a later statement that fails) is thrown to you. The later result sets' rows are skipped, not read: SQLite computes only a later result set's first row, so an error raised in one of its other rows is not raised, and System.Data.Odbc reports such an error in some batches and not in others, so don't rely on it. Stopping early does not do that: an enumerator disposed before it reports the end of the rows (a `foreach` left with `break`, `First` or `FirstOrDefault`, `Take`, even on the last row) closes the reader. Many providers, Microsoft.Data.SqlClient, System.Data.SqlClient, Microsoft.Data.Sqlite and System.Data.OleDb among them, discard the remaining rows, the later statements' results and their errors when the reader closes, so the call looks like a success. Some read the rest of the batch when the reader closes and throw from there, so stopping early can throw: Npgsql (PostgreSQL) throws the batch's error, and System.Data.Odbc throws when a later statement or its first row fails, while an error raised in a row not yet read is reported in some batches and dropped in others.
+
+When you need only some of the rows but must not miss such an error, read the rest too, or raise the error before the statement that returns rows:
+
+```csharp
+await using var result = await dc.ExecuteQueryAsync(@"
+    SELECT id, name FROM Users WHERE id = {{id}};
+    UPDATE Users SET last_seen = GETDATE() WHERE id = {{id}};", new { id = 7 });
+
+var rows = new List<dynamic>();
+await foreach (var row in result) rows.Add(row); // reads to the end, so a failing UPDATE throws here
+var user = rows.FirstOrDefault();
 ```
 
 ## Sample 5
@@ -641,13 +695,13 @@ The following databases are automatically recognized and require no additional c
 
 > **PostgreSQL-compatible databases**: CockroachDB, TimescaleDB, YugabyteDB, CrateDB, and other PostgreSQL wire-compatible databases work automatically through the Npgsql provider — no additional configuration needed.
 
-> **ODBC & OleDb — named parameters on positional-parameter databases**: ODBC and OleDb databases natively use positional `?` parameters, where parameter order matters and each occurrence requires its own parameter object. This library transparently handles the conversion — you write your queries using the same friendly `{{named}}` parameter syntax as any other database, and the library automatically transforms them into correctly ordered positional `?` parameters behind the scenes. This means you get the same clean, readable, named-parameter experience across **all** ADO.NET providers.
+> **ODBC & OleDb — named parameters on positional-parameter databases**: ODBC and OleDb databases natively use positional `?` parameters, where parameter order matters and each occurrence requires its own parameter object. This library transparently handles the conversion — you write your queries using the same friendly `{{named}}` parameter syntax as any other database, and the library automatically transforms them into correctly ordered positional `?` parameters behind the scenes. This means you get the same clean, readable, named-parameter experience across **all** ADO.NET providers. Placeholders take their values by the same rules as on other databases, including with several parameter sources. One difference: here only the pattern's matches are replaced, while on other databases a placeholder that has a value is also replaced by its text where the pattern doesn't match it (a use after a stray `{{` in a string, which the pattern pairs with it, or a use the pattern skips). A NULL placeholder is replaced only where the pattern matches it, on every database.
 
 ### Using a database not listed above?
 
 If you're using a less common database provider that isn't in the list above, the library will still work. However, you may need to configure the **parameter prefix** manually.
 
-**What is a parameter prefix?** When you use parameterized queries like `WHERE id = {{id}}`, the library converts your placeholder into a database-specific parameter (e.g., `@id` for SQL Server, `:id` for Oracle). Different databases use different prefix symbols.
+**What is a parameter prefix?** When you use parameterized queries like `WHERE id = {{id}}`, the library converts your placeholder into a database-specific parameter (e.g., `@vxv_1_id` for SQL Server, `:vxv_1_id` for Oracle). Different databases use different prefix symbols.
 
 The library automatically detects the correct prefix for all databases listed above. For unlisted providers, it defaults to `@` (which works for most databases). If your database uses a different prefix, set the fallback:
 

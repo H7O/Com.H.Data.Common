@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="10.1.0" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- Force the patched SourceGear-based native SQLite build. Microsoft.Data.Sqlite still floors
          the SQLitePCLRaw bundle at 2.1.11, which pulls the deprecated + vulnerable

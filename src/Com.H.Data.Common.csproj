@@ -7,9 +7,9 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>Com.H.Data.Common</AssemblyName>
     <RootNamespace>Com.H.Data.Common</RootNamespace>
-    <Version>10.1.0.10</Version>
+    <Version>10.1.0.11</Version>
     <Authors>Hussein Al Bayati</Authors>
-    <Description>Run SQL on any ADO.NET connection and get the rows back as strongly typed objects (ExecuteQuery&lt;T&gt;, ExecuteQueryAsync&lt;T&gt;) or as dynamic objects (ExecuteQuery, ExecuteQueryAsync), streamed as IEnumerable&lt;T&gt; or IAsyncEnumerable&lt;T&gt;. The methods extend DbConnection and DbCommand; ExecuteCommand and ExecuteCommandAsync run statements that return no rows. Parameters are written as {{name}} in the SQL and always sent as real database parameters, never concatenated into it. Their values come from an anonymous object, a dictionary, a JsonElement or JSON text, and the delimiters can be changed. Typed results map columns to properties by name, or by [DataMember] or [JsonPropertyName]. JSON and XML columns can be returned as nested objects. Works with SQL Server, PostgreSQL, MySQL and MariaDB, SQLite, Oracle, DB2 and any other ADO.NET provider; on ODBC and OleDb the named parameters become positional ? parameters automatically. No package dependencies on .NET 8 and later. Targets .NET 10, 9 and 8, and .NET Standard 2.0, which includes .NET Framework 4.6.1 and later.</Description>
+    <Description>Run SQL on any ADO.NET connection and get the rows back as strongly typed objects (ExecuteQuery&lt;T&gt;, ExecuteQueryAsync&lt;T&gt;) or as dynamic objects (ExecuteQuery, ExecuteQueryAsync), streamed as IEnumerable&lt;T&gt; or IAsyncEnumerable&lt;T&gt;. The methods extend DbConnection and DbCommand; ExecuteCommand and ExecuteCommandAsync run statements that return no rows. An error the database raises after the rows (SQL Server THROW after a SELECT) is thrown when the rows are read to their end. Parameters are written as {{name}} in the SQL and always sent as real database parameters, never concatenated into it. Their names can hold any characters, so a JSON body's keys work as they are ({{first name}}, {{e-mail}}); names are matched ignoring case, and a name the parameters object lacks, or whose value is null, is sent as NULL. Their values come from an anonymous object, a dictionary, a JsonElement or JSON text, and the delimiters can be changed. Several parameter sources, each with its own delimiters, can fill one query, a later source taking precedence. Typed results map columns to properties by name, or by [DataMember] or [JsonPropertyName]. JSON and XML columns can be returned as nested objects. Works with SQL Server, PostgreSQL, MySQL and MariaDB, SQLite, Oracle, DB2 and any other ADO.NET provider; on ODBC and OleDb the named parameters become positional ? parameters automatically. No package dependencies on .NET 8 and later. Targets .NET 10, 9 and 8, and .NET Standard 2.0, which includes .NET Framework 4.6.1 and later.</Description>
     <Copyright>Hussein Al Bayati</Copyright>
     <PackageProjectUrl>https://github.com/H7O/Com.H.Data.Common</PackageProjectUrl>
     <PackageIcon>128x128.jpg</PackageIcon>
@@ -17,14 +17,17 @@
     <RepositoryUrl>https://github.com/H7O/Com.H.Data.Common</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>ado.net;sql;micro-orm;typed;dynamic;async;iasyncenumerable;parameterized-query;sql-server;postgresql;mysql;sqlite;oracle;db2;odbc;oledb;netstandard2.0</PackageTags>
-    <PackageReleaseNotes>Three fixes. 1) An error raised after the first result set (SQL Server THROW or RAISERROR after a SELECT, or a later statement that fails) is now thrown once the caller has read every row; closing the reader used to discard it. A caller that stops reading early still doesn't see it. Only the first result set is returned, as before. 2) A single column with no name (SQL Server COUNT(*) without an alias) returns one bare value per row (null for NULL, and default(T) for NULL in typed ExecuteQuery&lt;T&gt;); it used to return each row twice, and a NULL three times. 3) ExecuteCommand and ExecuteCommandAsync honour closeConnectionOnExit: they close the connection, without disposing it, also when the first statement fails. They also dispose the command they create.</PackageReleaseNotes>
+    <PackageReleaseNotes>Placeholder names, and errors after the rows. 1) A placeholder can be named with any characters ({{first name}}, {{e-mail}}, {{@type}}, {{price (€)}}, {{prénom}}). Its SQL parameter's name keeps only ASCII letters, digits and underscores, and a name that comes out the same as another's gets a numbered suffix. Names that cleaned to the same name ({{first name}} and {{first-name}}) used to share it: the query failed on SQL Server and SQLite, and on PostgreSQL (Npgsql) both placeholders silently got the first one's value; characters such as @ and € used to stay in the name, which SQLite or SQL Server rejected. 2) Placeholders whose names differ only in case ({{Email}} and {{email}}), or one name under two markers of one pattern ({{x}} and {j{x}}), are one parameter. SQL Server used to refuse the batch ("The variable name has already been declared"), and SQLite refused the two-marker case too. 3) ODBC and OleDb: a placeholder that several parameter sets' patterns match is replaced once, with the value the named path gives it (the last set in the list whose pattern matches it and whose value isn't null; sets with the same pattern string are merged first, in the place of the last of them, the later value winning even when null). It used to be replaced once per pattern at the same position, which cut into the SQL after it, or threw ArgumentOutOfRangeException when the placeholder was near the end of the query, and it took the value of the last set in the list that had its name (sets with the same pattern string counting as one, at the last of them), even a null value, or a set whose pattern doesn't match it. 4) A placeholder that one set has no value for and another set fills no longer leaves an unused NULL parameter on the command. 5) When reading fails, the reader is closed without letting the close throw: on System.Data.Odbc, closing reads on and used to throw a later error of the batch in place of the first. A System.Data.Odbc reader whose Close threw while its rows were being read (stopping early with an error later in the batch) used to stay open, so its DbCommand could not run another query; it is now closed. 6) A pattern that matches more than a placeholder's markers and name (the character it requires before :name) now has only the markers and name replaced, on every path and for NULL placeholders too; NULL placeholders, and every placeholder on ODBC and OleDb, used to have the whole match replaced, which dropped that character (coalesce(:x, 0) lost its parenthesis). A query that ran only because of the dropped character now gets the SQL as written: SELECT -:x with x NULL used to send SELECT @x, and on SQL Server it now fails as SELECT -{{x}} does. A pattern with no open_marker and close_marker groups now has only its matches replaced; the named path used to replace the bare name everywhere in the SQL, column names included. With a one-marker pattern, a NULL placeholder at a spot the pattern skips (>:date_from, under a pattern that allows only a space, a parenthesis, a comma or = before the colon) is sent as written and fails: 10.1.0.10 bound it only when the text replacement of a resolved name it begins with (:date) happened to produce its NULL parameter's name. Write such a placeholder where the pattern matches it. 7) The IntelliSense docs of DbQueryResult and DbAsyncQueryResult no longer say the reader stays open until the result is disposed: it closes once its rows are read to the end or an enumeration stops early, and CloseReader is needed only for a result you haven't enumerated or while you hold an enumerator. closeConnectionOnExit on ExecuteQueryAsync is documented as disposing the connection, which it does. 8) The package's PDBs contain the source itself (EmbedAllSources), so stepping into the library works on every target framework, offline too.</PackageReleaseNotes>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     
-    <!-- Deterministic builds for reproducibility -->
+    <!-- Deterministic builds for reproducibility. ContinuousIntegrationBuild rewrites source
+         paths to "/_/" so the package carries no local folder names. It is on for every Release
+         build, not only on CI, so a pack from Visual Studio's right-click Pack comes out the
+         same as one from the command line or GitHub Actions. -->
     <Deterministic>true</Deterministic>
-    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(Configuration)' == 'Release'">true</ContinuousIntegrationBuild>
     
     <!-- Source Link - enables stepping into source code when debugging -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -32,7 +35,22 @@
     
     <!-- Embed debug symbols in the assembly (avoids separate .snupkg) -->
     <DebugType>embedded</DebugType>
+
+    <!-- Put the source itself in the PDB, not just a Source Link URL pointing at it, so that
+         stepping does not depend on the compiler's source-path rewrite landing (a
+         case-sensitive prefix match that parallel inner builds can silently miss) or on
+         GitHub being reachable. See SOURCELINK-STEPPING.md. -->
+    <EmbedAllSources>true</EmbedAllSources>
+
+    <!-- Stop a pack before it builds anything unless it is Release. See RequireReleaseForPack. -->
+    <BeforePack>RequireReleaseForPack;$(BeforePack)</BeforePack>
   </PropertyGroup>
+
+  <!-- Visual Studio's Pack command packs whichever configuration is selected, and a Debug
+       package is unoptimised and compiled with DEBUG defined. -->
+  <Target Name="RequireReleaseForPack" Condition="'$(Configuration)' != 'Release'">
+    <Error Text="Com.H.Data.Common must be packed from the Release configuration, but this pack is $(Configuration). Switch the configuration to Release, or run: dotnet pack .\src\Com.H.Data.Common.csproj -c Release" />
+  </Target>
 
   <!-- Source Link for GitHub -->
   <ItemGroup>

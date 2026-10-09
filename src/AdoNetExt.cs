@@ -41,6 +41,17 @@ namespace Com.H.Data.Common
         /// Gets or sets the template used for generating unique parameter names in prepared statements.
         /// Supports placeholders: {{DefaultParameterPrefix}}, {{ParameterCount}}, {{ParameterName}}.
         /// </summary>
+        /// <remarks>
+        /// {{ParameterName}} is the placeholder's name with every character other than an ASCII letter,
+        /// a digit or an underscore replaced by an underscore, so a placeholder can be named with any
+        /// characters ({{first name}}, {{e-mail}}, {{prénom}}); a name longer than MaxParameterNameLength
+        /// becomes lp_vxv_long_name_1, lp_vxv_long_name_2 and so on. When two generated names come out the same,
+        /// compared ignoring case ({{first name}} and {{first-name}}), the second gets a numbered suffix
+        /// (_2, _3) at its end. Placeholders whose names differ only in case are one parameter.
+        /// {{ParameterCount}} and {{ParameterName}} can be left out: the suffixes then tell the parameters
+        /// apart. Keep {{DefaultParameterPrefix}}, the prefix (@, :) that makes the name a parameter, and
+        /// something after it (one of the two, or text such as "p"): the prefix alone is not a name.
+        /// </remarks>
         public static string DefaultParameterTemplate { get; set; } = "{{DefaultParameterPrefix}}vxv_{{ParameterCount}}_{{ParameterName}}";
 
         /// <summary>
@@ -182,8 +193,9 @@ namespace Com.H.Data.Common
         /// </summary>
         public static bool IsPositionalParameterPrefix(string parameterPrefix) => parameterPrefix == "?";
 
-        private readonly static string _cleanVariableNamesRegex = @"[-\s\.\(\)\[\]\{\}\:\;\,\?\!\#\$\%\^\&\*\+\=\|\\\/\~\`\´\'\""\<\>\=\?\ ]";
-        private static readonly Regex _cleanVariableNamesRegexCompiled = new(_cleanVariableNamesRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        // A generated parameter name keeps only the characters every database accepts in one: a marker
+        // named "first name", "e-mail", "@type", "price (€)" or "prénom" still gets a valid name.
+        private static readonly Regex _notParameterNameCharacter = new("[^A-Za-z0-9_]", RegexOptions.Compiled);
 
         /// <summary>
         /// Maximum allowed length for the cleaned parameter name portion of a SQL parameter.
@@ -487,82 +499,32 @@ namespace Com.H.Data.Common
                 else
                 {
                     // Named parameter path (SQL Server, PostgreSQL, Oracle, SQLite, etc.)
-                    var nullParams = new List<(string queryParamsRegex, string paramName, string sqlParamName)>();
-                    int count = 0;
+                    var slots = ResolveMarkers(query, queryParamList, replaceText: true, out var slotText, out var slotDelimiter);
+                    var sqlParamNames = new string[slots.Count];
+                    // Compared ignoring case: SQL Server and others treat @Email and @email as one name.
+                    var usedSqlParamNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     int longParamCount = 0;
-                    foreach (var queryParam in queryParamList.ReduceToUnique(true))
+                    for (int i = 0; i < slots.Count; i++)
                     {
-                        count++;
-                        var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
-                        var matchingQueryVars =
-                            Regex.Matches(query, queryParam.QueryParamsRegex)
-                            .Cast<Match>()
-                            .Select(x => new
-                            {
-                                Name = x.Groups["param"].Value,
-                                OpenMarker = x.Groups["open_marker"].Value,
-                                CloseMarker = x.Groups["close_marker"].Value
-                            })
-                            .Where(x => !string.IsNullOrEmpty(x.Name))
-                            .Distinct().ToList();
+                        var cleanedParamName = slots[i].Name.Length > MaxParameterNameLength
+                            ? $"lp_vxv_long_name_{++longParamCount}"
+                            : _notParameterNameCharacter.Replace(slots[i].Name, "_");
 
-                        foreach (var matchingQueryVar in matchingQueryVars)
-                        {
-                            object? matchingDataModelPropertyValue = null;
-                            dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
+                        // Two markers can still clean to the same name ("first name" and "first-name"),
+                        // and a template without {{ParameterName}} gives every marker of a set the same
+                        // name, so a name already taken gets a numbered suffix at its end.
+                        var generatedName = SqlParameterName(parameterPrefix, slots[i].Source, cleanedParamName);
+                        var sqlParamName = generatedName;
+                        for (int n = 2; !usedSqlParamNames.Add(sqlParamName); n++)
+                            sqlParamName = generatedName + "_" + n.ToString(CultureInfo.InvariantCulture);
+                        sqlParamNames[i] = sqlParamName;
 
-                            var cleanedParamName = matchingQueryVar.Name.Length > MaxParameterNameLength
-                                ? $"lp_vxv_long_name_{++longParamCount}"
-                                : _cleanVariableNamesRegexCompiled.Replace(matchingQueryVar.Name, "_");
-
-                            var sqlParamName = DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", parameterPrefix)
-                                .Replace("{{ParameterCount}}", count.ToString(CultureInfo.InvariantCulture))
-                                .Replace("{{ParameterName}}", cleanedParamName);
-
-                            if (matchingDataModelPropertyValue is null)
-                            {
-                                // Store the regex pattern and param name for deferred replacement.
-                                // This is mutation-proof: instead of saving the literal matched text
-                                // (which may be mutated by subsequent pattern replacements), we re-match
-                                // against the current query state at the end.
-                                nullParams.Add((queryParam.QueryParamsRegex, matchingQueryVar.Name, sqlParamName));
-                                continue;
-                            }
-
-                            query = query.Replace(
-                                        matchingQueryVar.OpenMarker
-                                        + matchingQueryVar.Name
-                                        + matchingQueryVar.CloseMarker
-                                        , sqlParamName,
-                                        StringComparison.OrdinalIgnoreCase
-                                        );
-
-                            var p = command.CreateParameter();
-                            p.ParameterName = sqlParamName;
-                            p.Value = matchingDataModelPropertyValue ?? DBNull.Value;
-                            command.Parameters.Add(p);
-                        }
-
-                    }
-
-                    // Deferred null parameter replacement: re-match against the (possibly mutated) query
-                    // to find any remaining unresolved markers for each null parameter.
-                    // This approach is mutation-proof because it matches the current query state
-                    // rather than relying on saved literal text that may have been altered
-                    // by intermediate pattern replacements.
-                    foreach (var nullParam in nullParams)
-                    {
-                        query = Regex.Replace(query, nullParam.queryParamsRegex, m =>
-                        {
-                            if (string.Equals(m.Groups["param"].Value, nullParam.paramName, StringComparison.OrdinalIgnoreCase))
-                                return nullParam.sqlParamName;
-                            return m.Value; // not our param, leave it alone
-                        });
                         var p = command.CreateParameter();
-                        p.ParameterName = nullParam.sqlParamName;
-                        p.Value = DBNull.Value;
+                        p.ParameterName = sqlParamName;
+                        p.Value = slots[i].Value ?? DBNull.Value;
                         command.Parameters.Add(p);
                     }
+                    query = FillSlots(slotText, slotDelimiter, slot => sqlParamNames[slot]);
                 }
             }
 
@@ -580,6 +542,10 @@ namespace Com.H.Data.Common
             Dictionary<string, dynamic>? dataTypeDict,
             [EnumeratorCancellation] CancellationToken cToken = default)
         {
+            // True while the caller holds a row: an enumerator disposed then stopped early.
+            bool atRow = false;
+            // The batch was read to its end without an exception.
+            bool readToTheEnd = false;
             try
             {
                 if (reader?.HasRows == true)
@@ -604,7 +570,9 @@ namespace Com.H.Data.Common
                             // came back twice (the value, then an object with an empty key), and
                             // three times when NULL (null, DBNull, the object).
                             var value = reader.GetValue(0);
+                            atRow = true;
                             yield return value is DBNull ? null! : value;
+                            atRow = false;
                             continue;
                         }
 
@@ -644,7 +612,9 @@ namespace Com.H.Data.Common
                             }
                         }
 
+                        atRow = true;
                         yield return result;
+                        atRow = false;
                     }
                 }
 
@@ -654,7 +624,8 @@ namespace Com.H.Data.Common
                 // fails. Closing the reader instead discards them (SqlClient cleans up the rest of
                 // the batch without raising its errors), and the caller sees a success. Their rows
                 // are skipped: only the first result set is returned. A caller that stops reading
-                // early never gets here, so nothing is thrown from disposal.
+                // early never gets here; on providers whose Close reads the rest of the batch
+                // (Npgsql, System.Data.Odbc), the error is thrown from disposal instead.
                 if (reader != null)
                 {
                     while (await reader.NextResultAsync(cToken).ConfigureAwait(false))
@@ -662,6 +633,7 @@ namespace Com.H.Data.Common
                         cToken.ThrowIfCancellationRequested();
                     }
                 }
+                readToTheEnd = true;
             }
             finally
             {
@@ -673,9 +645,49 @@ namespace Com.H.Data.Common
                 // on strict providers (SQL Server without MARS, Oracle, PostgreSQL, etc.)
                 // without requiring the caller to explicitly dispose the result wrapper.
                 // The wrapper's Dispose is still safe to call afterwards — Close is idempotent.
-                if (reader != null && !reader.IsClosed)
+                if (reader == null || reader.IsClosed)
+                {
+                }
+                else if (!atRow && !readToTheEnd)
+                {
+                    // An exception is on its way to the caller (the batch's error, say). Closing can
+                    // throw a later error in its place (System.Data.Odbc reads the rest of the batch
+                    // when it closes), so the reader is closed quietly.
+                    await CloseQuietlyAsync(reader).ConfigureAwait(false);
+                }
+                else
+                {
+                    try
+                    {
+                        await reader.CloseAsync().ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Some providers (Npgsql, System.Data.Odbc) read the rest of the batch when the
+                        // reader closes and throw its error here, for the caller. System.Data.Odbc stays
+                        // open after such a Close, which keeps its command from running another query.
+                        await CloseQuietlyAsync(reader).ConfigureAwait(false);
+                        throw;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Closes the reader without throwing, when an error is already on its way to the caller: closing
+        /// can throw a later error in its place. Some providers (System.Data.Odbc) read the rest of the
+        /// batch when they close, throw, and stay open; a second Close then closes them.
+        /// </summary>
+        private static async Task CloseQuietlyAsync(DbDataReader reader)
+        {
+            for (int attempt = 0; attempt < 2 && !reader.IsClosed; attempt++)
+            {
+                try
                 {
                     await reader.CloseAsync().ConfigureAwait(false);
+                }
+                catch
+                {
                 }
             }
         }
@@ -688,6 +700,14 @@ namespace Com.H.Data.Common
         /// and returns the parameter values in left-to-right occurrence order.
         /// Each occurrence of a placeholder produces a separate entry, so the same parameter
         /// appearing multiple times in the query produces multiple entries with the same value.
+        /// Placeholders take their values by the named path's rules: when several parameter sets'
+        /// patterns match the same placeholder, it is replaced once, with the value of the latest of those
+        /// sets that has a non-null one. Sets with the same pattern string are merged into one first, in
+        /// the place of the last of them, the later set's value winning for a name both have, even when
+        /// it is null. Only the patterns' matches are replaced, though: the named path also replaces the
+        /// text of a placeholder that has a value where its pattern doesn't match it (a use after a stray
+        /// "{{" that the pattern pairs with it, or one a pattern skips), so such a use can differ between
+        /// the two. A NULL placeholder is replaced only where its pattern matches it, on both paths.
         /// </summary>
         /// <param name="query">The SQL query with placeholders.</param>
         /// <param name="queryParamList">The parameter sets with regex patterns and data models.</param>
@@ -696,50 +716,269 @@ namespace Com.H.Data.Common
         public static (string TransformedQuery, List<(string Name, object? Value)> OrderedParameters)
             BuildPositionalParameters(string query, IEnumerable<DbQueryParams> queryParamList)
         {
-            // Build a lookup of param name -> value across all queryParam sets.
-            var paramValues = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var queryParam in queryParamList.ReduceToUnique(true))
+            var slots = ResolveMarkers(query, queryParamList, replaceText: false, out var slotText, out var slotDelimiter);
+            var orderedParams = new List<(string Name, object? Value)>();
+            var transformedQuery = FillSlots(slotText, slotDelimiter, slot =>
             {
-                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
-                if (dataModelProperties is null) continue;
-                foreach (var kvp in dataModelProperties)
-                {
-                    paramValues.TryAdd(kvp.Key, kvp.Value);
-                }
-            }
+                orderedParams.Add((slots[slot].Name, slots[slot].Value));
+                return "?";
+            });
+            return (transformedQuery, orderedParams);
+        }
 
-            // Collect all placeholder matches across all queryParam regex patterns,
-            // ordered by their position in the query (left-to-right).
-            var allOccurrences = new List<(int Index, string Name, string FullMatch)>();
+        /// <summary>
+        /// Finds the value of every placeholder in the query and replaces each placeholder with a slot.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Sets with the same pattern string are first merged into one by ReduceToUnique, in the place of
+        /// the last of them, the later set's value winning for a name both have, even when it is null.
+        /// The resulting parameter sets are
+        /// read last to first. A placeholder takes the value of the latest set whose
+        /// pattern matches it and that has a non-null value under its name (compared ignoring case). A set
+        /// without one leaves the placeholder for the set before it: several sets' patterns can match the
+        /// same placeholder ({{name}} for both a JSON body and a query string, say), and each placeholder
+        /// is replaced only once. A placeholder that no set has a value for becomes NULL, under the latest
+        /// set whose pattern matched it.
+        /// </para>
+        /// <para>
+        /// The placeholders of one set whose names differ only in case share one slot. In the returned
+        /// text each slot is written as its index between two <paramref name="slotDelimiter"/> characters:
+        /// a private-use character the query doesn't contain, so text that looks like a slot can't come
+        /// from the query, and the patterns of the sets read after it don't see a parameter name.
+        /// </para>
+        /// <para>
+        /// With <paramref name="replaceText"/> (the named path), for a pattern with an open and a close
+        /// marker, a resolved placeholder's text (open marker, name, close marker) becomes its slot wherever
+        /// it appears, ignoring case. Otherwise, and for NULL placeholders, the part of each of the
+        /// pattern's matches that <see cref="PlaceholderSpan"/> gives does; on the named path, the text of
+        /// a resolved placeholder with one marker then also does wherever no name character continues it
+        /// (<see cref="ReplaceOneMarkerText"/>). A NULL placeholder's text where the pattern skips it stays.
+        /// </para>
+        /// </remarks>
+        private static List<(string Name, int Source, object? Value)> ResolveMarkers(
+            string query,
+            IEnumerable<DbQueryParams> queryParamList,
+            bool replaceText,
+            out string slotText,
+            out char slotDelimiter)
+        {
+            var delimiter = '\uE000';
+            while (query.IndexOf(delimiter) >= 0)
+            {
+                if (delimiter == '\uF8FF')
+                    throw new ArgumentException("The query contains every Unicode private-use character.", nameof(query));
+                delimiter++;
+            }
+            string Slot(int index) => delimiter + index.ToString(CultureInfo.InvariantCulture) + delimiter;
+
+            var slots = new List<(string Name, int Source, object? Value)>();
+            // Per set, the placeholder names it had no value for.
+            var unresolved = new List<(string QueryParamsRegex, int Source, HashSet<string> Names)>();
+            int source = 0;
             foreach (var queryParam in queryParamList.ReduceToUnique(true))
             {
-                foreach (Match m in Regex.Matches(query, queryParam.QueryParamsRegex))
+                source++;
+                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
+                // The slot of each placeholder name this set has resolved, or -1 for one it left for the next set.
+                var slotOfName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var unresolvedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                // The text of each placeholder this set resolved, as written (open marker, name, close marker).
+                var resolvedText = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                bool everyResolvedMatchHasBothMarkers = true;
+                // The same for placeholders with one marker, and which side has none.
+                var oneMarkerText = new Dictionary<string, (int Slot, bool OpenEmpty, bool CloseEmpty)>(StringComparer.OrdinalIgnoreCase);
+                var matches = Regex.Matches(query, queryParam.QueryParamsRegex);
+                foreach (Match m in matches)
                 {
                     var name = m.Groups["param"].Value;
-                    if (!string.IsNullOrEmpty(name))
-                        allOccurrences.Add((m.Index, name, m.Value));
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (!slotOfName.TryGetValue(name, out var slot))
+                    {
+                        object? value = null;
+                        dataModelProperties?.TryGetValue(name, out value);
+                        if (value is null)
+                        {
+                            slot = -1;
+                            unresolvedNames.Add(name);
+                        }
+                        else
+                        {
+                            slot = slots.Count;
+                            slots.Add((name, source, value));
+                        }
+                        slotOfName.Add(name, slot);
+                    }
+                    if (slot < 0) continue;
+                    var openMarker = m.Groups["open_marker"].Value;
+                    var closeMarker = m.Groups["close_marker"].Value;
+                    if (openMarker.Length > 0 && closeMarker.Length > 0)
+                        resolvedText[openMarker + name + closeMarker] = slot;
+                    else
+                    {
+                        everyResolvedMatchHasBothMarkers = false;
+                        if (openMarker.Length > 0 || closeMarker.Length > 0)
+                            oneMarkerText[openMarker + name + closeMarker] = (slot, openMarker.Length == 0, closeMarker.Length == 0);
+                    }
                 }
-            }
-            // Sort by position so parameters are added in query-occurrence order
-            allOccurrences.Sort((a, b) => a.Index.CompareTo(b.Index));
 
-            // Replace right-to-left to preserve earlier indices
-            for (int i = allOccurrences.Count - 1; i >= 0; i--)
+                if (replaceText && everyResolvedMatchHasBothMarkers)
+                {
+                    // Named path: a resolved placeholder's text is replaced wherever it appears, ignoring
+                    // case, not only where the pattern matched it. Queries the pattern pairs oddly rely on
+                    // that: a stray "{{" in a literal before a second {{id}} (the pattern pairs them, so
+                    // that {{id}} is no match of its own), a pipe operator beside |a| delimiters, or a
+                    // pattern that also matches the character before the marker.
+                    foreach (var text in resolvedText)
+                        query = query.Replace(text.Key, Slot(text.Value), StringComparison.OrdinalIgnoreCase);
+                }
+                else if (slotOfName.Values.Any(slot => slot >= 0))
+                {
+                    // The pattern's matches are replaced (see PlaceholderSpan for which part of each).
+                    var replaced = new System.Text.StringBuilder(query.Length);
+                    int position = 0;
+                    foreach (Match m in matches)
+                    {
+                        var name = m.Groups["param"].Value;
+                        if (string.IsNullOrEmpty(name) || slotOfName[name] < 0) continue;
+                        var (start, end) = PlaceholderSpan(m);
+                        replaced.Append(query, position, start - position);
+                        replaced.Append(Slot(slotOfName[name]));
+                        position = end;
+                    }
+                    replaced.Append(query, position, query.Length - position);
+                    query = replaced.ToString();
+
+                    if (replaceText)
+                    {
+                        // Named path, a pattern with a one-marker alternative: its two-marker placeholders
+                        // are bound by their text as above, and its one-marker ones by guarded text.
+                        foreach (var text in resolvedText)
+                            query = query.Replace(text.Key, Slot(text.Value), StringComparison.OrdinalIgnoreCase);
+                        query = ReplaceOneMarkerText(query, oneMarkerText, Slot);
+                    }
+                }
+                if (unresolvedNames.Count > 0)
+                    unresolved.Add((queryParam.QueryParamsRegex, source, unresolvedNames));
+            }
+
+            // What no set had a value for is NULL. Matching again finds only the placeholders still in
+            // the query: one a later set resolved is a slot by now, and gets no NULL parameter. Only the
+            // pattern's matches become NULL: text the pattern skips (":token" in 'session:token') stays.
+            foreach (var (queryParamsRegex, unresolvedSource, names) in unresolved)
             {
-                var occ = allOccurrences[i];
-                query = query.Remove(occ.Index, occ.FullMatch.Length).Insert(occ.Index, "?");
+                var slotOfName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                query = Regex.Replace(query, queryParamsRegex, m =>
+                {
+                    var name = m.Groups["param"].Value;
+                    if (!names.Contains(name)) return m.Value;
+                    if (!slotOfName.TryGetValue(name, out var slot))
+                    {
+                        slot = slots.Count;
+                        slots.Add((name, unresolvedSource, null));
+                        slotOfName.Add(name, slot);
+                    }
+                    var (start, end) = PlaceholderSpan(m);
+                    return m.Value.Substring(0, start - m.Index) + Slot(slot) + m.Value.Substring(end - m.Index);
+                });
             }
 
-            // Build ordered parameter list
-            var orderedParams = new List<(string Name, object? Value)>();
-            foreach (var occ in allOccurrences)
-            {
-                paramValues.TryGetValue(occ.Name, out var value);
-                orderedParams.Add((occ.Name, value));
-            }
-
-            return (query, orderedParams);
+            slotText = query;
+            slotDelimiter = delimiter;
+            return slots;
         }
+
+        /// <summary>
+        /// Named path, a pattern with one marker (":name"): as with two markers, a placeholder's text is
+        /// also replaced where the pattern didn't match it ("1-:a" under a pattern that lists the
+        /// characters allowed before the colon), ignoring case as names are compared everywhere else
+        /// (ordinal), but only where no name character continues it on the side without a marker, so
+        /// ":a" leaves ":ab" alone and "a$" leaves "ba$" alone.
+        /// </summary>
+        private static string ReplaceOneMarkerText(
+            string query,
+            Dictionary<string, (int Slot, bool OpenEmpty, bool CloseEmpty)> oneMarkerText,
+            Func<int, string> slot)
+        {
+            foreach (var text in oneMarkerText)
+            {
+                var replaced = new System.Text.StringBuilder(query.Length);
+                int position = 0;
+                int index;
+                while ((index = query.IndexOf(text.Key, position, StringComparison.OrdinalIgnoreCase)) >= 0)
+                {
+                    int end = index + text.Key.Length;
+                    bool continued = (text.Value.OpenEmpty && index > 0 && IsNameCharacter(query[index - 1]))
+                        || (text.Value.CloseEmpty && end < query.Length && IsNameCharacter(query[end]));
+                    replaced.Append(query, position, index - position);
+                    replaced.Append(continued ? query.Substring(index, text.Key.Length) : slot(text.Value.Slot));
+                    position = end;
+                }
+                replaced.Append(query, position, query.Length - position);
+                query = replaced.ToString();
+            }
+            return query;
+        }
+
+        /// <summary>A character a regular expression's \w matches: a letter, a decimal digit, a nonspacing mark or a connector such as _.</summary>
+        private static bool IsNameCharacter(char c)
+        {
+            switch (CharUnicodeInfo.GetUnicodeCategory(c))
+            {
+                case UnicodeCategory.UppercaseLetter:
+                case UnicodeCategory.LowercaseLetter:
+                case UnicodeCategory.TitlecaseLetter:
+                case UnicodeCategory.ModifierLetter:
+                case UnicodeCategory.OtherLetter:
+                case UnicodeCategory.NonSpacingMark:
+                case UnicodeCategory.DecimalDigitNumber:
+                case UnicodeCategory.ConnectorPunctuation:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// The part of a pattern's match that a placeholder's slot replaces: its markers and name when it
+        /// has a marker, so text the pattern matched around them stays (the character it requires before
+        /// ":name", which keeps "::" casts out); the whole match when it has neither marker, since its
+        /// text would be a bare name (a column).
+        /// </summary>
+        private static (int Start, int End) PlaceholderSpan(Match m)
+        {
+            var open = m.Groups["open_marker"];
+            var close = m.Groups["close_marker"];
+            if (open.Length == 0 && close.Length == 0) return (m.Index, m.Index + m.Length);
+            var param = m.Groups["param"];
+            return (open.Length > 0 ? open.Index : param.Index,
+                    close.Length > 0 ? close.Index + close.Length : param.Index + param.Length);
+        }
+
+        /// <summary>
+        /// Replaces each slot that <see cref="ResolveMarkers"/> wrote with the text <paramref name="textOfSlot"/>
+        /// returns for its index, called once per slot, left to right.
+        /// </summary>
+        private static string FillSlots(string slotText, char slotDelimiter, Func<int, string> textOfSlot)
+        {
+            var result = new System.Text.StringBuilder(slotText.Length);
+            int position = 0;
+            int open;
+            while ((open = slotText.IndexOf(slotDelimiter, position)) >= 0)
+            {
+                int close = slotText.IndexOf(slotDelimiter, open + 1);
+                result.Append(slotText, position, open - position);
+                result.Append(textOfSlot(int.Parse(slotText.Substring(open + 1, close - open - 1), CultureInfo.InvariantCulture)));
+                position = close + 1;
+            }
+            result.Append(slotText, position, slotText.Length - position);
+            return result.ToString();
+        }
+
+        private static string SqlParameterName(string parameterPrefix, int source, string cleanedParamName) =>
+            DefaultParameterTemplate.Replace("{{DefaultParameterPrefix}}", parameterPrefix)
+                .Replace("{{ParameterCount}}", source.ToString(CultureInfo.InvariantCulture))
+                .Replace("{{ParameterName}}", cleanedParamName);
 
         #endregion
 
@@ -754,7 +993,7 @@ namespace Com.H.Data.Common
         /// <param name="query">SQL query text. Use {{paramName}} syntax for parameters.</param>
         /// <param name="queryParams">Parameters object (anonymous object, Dictionary, JsonElement, JSON string, or custom object with matching properties)</param>
         /// <param name="queryParamsRegex">Regex pattern for parameter delimiters. Default: @"(?&lt;open_marker&gt;\{\{)(?&lt;param&gt;.*?)?(?&lt;close_marker&gt;\}\})" for {{ }} delimiters</param>
-        /// <param name="closeConnectionOnExit">If true, closes the connection when the result is disposed</param>
+        /// <param name="closeConnectionOnExit">If true, disposing the result disposes the connection. SqlClient, Npgsql and MySqlConnector can't open a disposed connection again; ExecuteQuery only closes it.</param>
         /// <param name="cToken">Cancellation token for async operation</param>
         /// <returns>A DbAsyncQueryResult that implements IAsyncEnumerable&lt;dynamic&gt; and IAsyncDisposable</returns>
         /// <exception cref="ArgumentNullException">Thrown when command or query is null</exception>
@@ -929,7 +1168,7 @@ namespace Com.H.Data.Common
         /// <param name="query">SQL query text. Use {{paramName}} syntax for parameters.</param>
         /// <param name="queryParams">Parameters object (anonymous object, Dictionary, JsonElement, JSON string, or custom object with matching properties)</param>
         /// <param name="queryParamsRegex">Regex pattern for parameter delimiters. Default: @"(?&lt;open_marker&gt;\{\{)(?&lt;param&gt;.*?)?(?&lt;close_marker&gt;\}\})" for {{ }} delimiters</param>
-        /// <param name="closeConnectionOnExit">If true, closes the connection when the result is disposed</param>
+        /// <param name="closeConnectionOnExit">If true, disposing the result disposes the connection. SqlClient, Npgsql and MySqlConnector can't open a disposed connection again; ExecuteQuery only closes it.</param>
         /// <param name="cToken">Cancellation token for async operation</param>
         /// <returns>A DbAsyncQueryResult&lt;T&gt; that implements IAsyncEnumerable&lt;T&gt; and IAsyncDisposable</returns>
         /// <exception cref="ArgumentNullException">Thrown when command or query is null</exception>
@@ -1027,7 +1266,7 @@ namespace Com.H.Data.Common
         /// <param name="queryParams">Parameters object (anonymous object, Dictionary, JsonElement, JSON string, or custom object with matching properties)</param>
         /// <param name="queryParamsRegex">Regex pattern for parameter delimiters. Default: @"(?&lt;open_marker&gt;\{\{)(?&lt;param&gt;.*?)?(?&lt;close_marker&gt;\}\})" for {{ }} delimiters</param>
         /// <param name="commandTimeout">Command timeout in seconds. If null, uses the default timeout.</param>
-        /// <param name="closeConnectionOnExit">If true, closes the connection when the result is disposed</param>
+        /// <param name="closeConnectionOnExit">If true, disposing the result disposes the connection. SqlClient, Npgsql and MySqlConnector can't open a disposed connection again; ExecuteQuery only closes it.</param>
         /// <param name="cToken">Cancellation token for async operation</param>
         /// <returns>A DbAsyncQueryResult that implements IAsyncEnumerable&lt;dynamic&gt; and IAsyncDisposable</returns>
         /// <exception cref="ArgumentNullException">Thrown when connection or query is null</exception>
@@ -1212,7 +1451,7 @@ namespace Com.H.Data.Common
         /// <param name="queryParams">Parameters object (anonymous object, Dictionary, JsonElement, JSON string, or custom object with matching properties)</param>
         /// <param name="queryParamsRegex">Regex pattern for parameter delimiters. Default: @"(?&lt;open_marker&gt;\{\{)(?&lt;param&gt;.*?)?(?&lt;close_marker&gt;\}\})" for {{ }} delimiters</param>
         /// <param name="commandTimeout">Command timeout in seconds. If null, uses the default timeout.</param>
-        /// <param name="closeConnectionOnExit">If true, closes the connection when the result is disposed</param>
+        /// <param name="closeConnectionOnExit">If true, disposing the result disposes the connection. SqlClient, Npgsql and MySqlConnector can't open a disposed connection again; ExecuteQuery only closes it.</param>
         /// <param name="cToken">Cancellation token for async operation</param>
         /// <returns>A DbAsyncQueryResult&lt;T&gt; that implements IAsyncEnumerable&lt;T&gt; and IAsyncDisposable</returns>
         /// <exception cref="ArgumentNullException">Thrown when connection or query is null</exception>
