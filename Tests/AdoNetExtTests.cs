@@ -804,8 +804,8 @@ public class AdoNetExtTests : IDisposable
         var patternA = @"(?<open_marker>\{a\{)(?<param>.*?)?(?<close_marker>\}a\})";
         var patternB = @"(?<open_marker>\{\{)(?<param>.*?)?(?<close_marker>\}\})";
 
-        // Source order matters: after ReduceToUnique(reverse:true), the LAST item
-        // in the original list is processed FIRST. We want Pattern A to process first
+        // Source order matters: the LAST item in the list is processed FIRST.
+        // We want Pattern A to process first
         // so its null param is deferred, then Pattern B mutates the query.
         var queryParamsList = new List<DbQueryParams>
         {
@@ -1008,6 +1008,648 @@ public class AdoNetExtTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteQueryAsync_APatternThatCouldReadAnEarlierPlaceholdersSlot_BindsOnlyTheText()
+    {
+        // The {{a}} set is read first; the digits pattern read after it must not take the index of
+        // {{a}}'s slot for a name.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new Dictionary<string, object> { ["7"] = "seven" }, QueryParamsRegex = @"(?<param>\b\d+\b)" },
+            new() { DataModel = new { a = "Ann" } },
+        };
+
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync("SELECT {{a}} AS a, 7 AS b", sets);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("Ann", (string)row.a);
+        Assert.Equal("seven", (string)row.b);
+    }
+
+    private const string SettingsPattern = @"(?<open_marker>\{s\{|\{settings\{)(?<param>.*?)?(?<close_marker>\}\})";
+
+    [Fact]
+    public async Task ExecuteQueryAsync_TwoStrayOpenMarkers_PairAsBefore_AndBindTheirPlaceholders()
+    {
+        // The default pattern pairs each '{{' with the "}}" of the settings placeholder after it. Once
+        // {s{c}} is replaced, the first '{{' must not make a new pairing that turns '{{' AS c, {s{e}} into a NULL.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { c = "C" }, QueryParamsRegex = SettingsPattern },
+            new() { DataModel = null },
+        };
+
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT '{{' AS a, {s{c}} AS b, '{{' AS c, {s{e}} AS d", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal(("{{", "C", "{{"), ((string)row.a, (string)row.b, (string)row.c));
+            Assert.Null(row.d);
+        }
+
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT 1 AS a /* {{ */, {s{c}} AS b /* {{ */, {s{e}} AS d", sets))
+        {
+            var row = (IDictionary<string, object?>)await SingleRowAsync(result);
+            Assert.Equal(new[] { "a", "b", "d" }, row.Keys);
+            Assert.Null(row["d"]);
+        }
+
+        var (_, parameters) = AdoNetExt.BuildPositionalParameters("SELECT '{{' AS a, {s{c}} AS b, '{{' AS c, {s{e}} AS d", sets);
+        Assert.Equal(new object?[] { "C", null }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_AdjacentSetsWithOnePattern_PairTheirMarkersAsOneSet()
+    {
+        // A pipe operator beside |a| delimiters, and a placeholder text inside another's: two adjacent
+        // sets with one pattern are read as one, as a single set with both values is.
+        const string pipe = @"(?<open_marker>\|)(?<param>.*?)?(?<close_marker>\|)";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { b = "7" }, QueryParamsRegex = pipe },
+            new() { DataModel = new { a = 1 }, QueryParamsRegex = pipe },
+        };
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT |a| | 4 AS x, |a| | 2 AS y, |b| AS z", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal((5L, 3L, "7"), ((long)row.x, (long)row.y, (string)row.z));
+        }
+
+        sets =
+        [
+            new() { DataModel = new Dictionary<string, object> { ["a{{b"] = "X" } },
+            new() { DataModel = new { b = "Y" } },
+        ];
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT {{a{{b}} AS x, {{b}} AS y", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal(("X", "Y"), ((string)row.x, (string)row.y));
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_SetsWithOnePatternApart_TheEarlierOneStillFindsWhatAStrayMarkerHides()
+    {
+        // The later body set fills {{Id}}; reading the text after that, the stray '{{' pairs past {{Id}}'s
+        // slot with the "}}" of {{x}}. The earlier body set still binds {{x}}, as its pattern first matched it.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "X" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { q = "Q" }, QueryParamsRegex = QueryStringPattern },
+            new() { DataModel = new { Id = "I" }, QueryParamsRegex = JsonBodyPattern },
+        };
+        await using var result = await _connection.ExecuteQueryAsync("SELECT '{{' AS c0, {{Id}} AS c1, {{x}} AS c2, {{Id}} AS c3", sets);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(("{{", "I", "X", "I"), ((string)row.c0, (string)row.c1, (string)row.c2, (string)row.c3));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_OneMarkerPattern_ANameThatGoesOnIntoAnotherName_KeepsItsOwnValue()
+    {
+        const string dotted = @"(?<open_marker>:)(?<param>[\w.]+)(?<close_marker>)";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new Dictionary<string, object> { ["user.name"] = "Ann" }, QueryParamsRegex = dotted },
+            new() { DataModel = new { other = 1 } },
+            new() { DataModel = new { user = "u42" }, QueryParamsRegex = dotted },
+        };
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT :user.name AS a, :user AS b", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal(("Ann", "u42"), ((string)row.a, (string)row.b));
+        }
+
+        // Without a value, the longer name is a NULL of its own, not the shorter name's value plus text.
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT :user AS b, :user.name AS a", new { user = "u42" }, dotted))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal("u42", (string)row.b);
+            Assert.Null(row.a);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_APatternWithSpacesBetweenMarkerAndName_BindsThePlaceholder()
+    {
+        const string spaced = @"(?<open_marker>\{\{)\s*(?<param>\w+)\s*(?<close_marker>\}\})";
+
+        await using var result = await _connection.ExecuteQueryAsync("SELECT {{ name }} AS v, {{ id }} AS i", new { name = "Ann" }, spaced);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("Ann", (string)row.v);
+        Assert.Null(row.i);
+    }
+
+    [Fact]
+    public void BuildPositional_APatternThatTakesTheCharacterBeforeItsMarker_BindsBesideAnotherPlaceholder()
+    {
+        // The colon pattern takes the character before ':' too, here the end of {{a}}'s slot.
+        const string colon = @"(?:^|[^:])(?<open_marker>:)(?<param>\w+)(?<close_marker>)";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { b = 2 }, QueryParamsRegex = colon },
+            new() { DataModel = new { a = 1 } },
+        };
+
+        var (query, parameters) = AdoNetExt.BuildPositionalParameters("SELECT {{a}}:b", sets);
+
+        Assert.Equal("SELECT ??", query);
+        Assert.Equal(new object?[] { 1, 2 }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_APlaceholderSpelledWithSpaces_AlsoBindsItsPlainSpelling()
+    {
+        // The stray '{{' pairs with {{id}}'s "}}", so {{id}} is no match of its own; {{ id }} binds it by its text.
+        const string spaced = @"(?<open_marker>\{\{)\s*(?<param>.*?)\s*(?<close_marker>\}\})";
+
+        await using var result = await _connection.ExecuteQueryAsync("SELECT /* {{ id }} */ '{{' AS s, {{id}} AS c", new { id = "ID" }, spaced);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(("{{", "ID"), ((string)row.s, (string)row.c));
+    }
+
+    [Fact]
+    public void BuildPositional_SetsWithOnePatternApart_BindAPlaceholderAStrayMarkerPairsAcross()
+    {
+        // The {pq{ sets are read as one, in the place of the last of them, so {{x}} is still a match of
+        // their pattern when the {auth{ set's slot later takes the "}}" the stray '{{' paired with.
+        const string previousQuery = @"(?<open_marker>\{\{|\{pq\{)(?<param>.*?)?(?<close_marker>\}\})";
+        const string auth = @"(?<open_marker>\{auth\{)(?<param>.*?)?(?<close_marker>\}\})";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = 1 }, QueryParamsRegex = previousQuery },
+            new() { DataModel = new { tid = "t" }, QueryParamsRegex = auth },
+            new() { DataModel = new { y = 2 }, QueryParamsRegex = previousQuery },
+        };
+
+        var (query, parameters) = AdoNetExt.BuildPositionalParameters("SELECT '{{' AS lit, {auth{tid}} AS t, {{x}} AS x", sets);
+
+        Assert.Equal("SELECT '{{' AS lit, ? AS t, ? AS x", query);
+        Assert.Equal(new object?[] { "t", 1 }, parameters.Select(p => p.Value));
+
+        sets =
+        [
+            new() { DataModel = new { b = 2 }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { c = "C" }, QueryParamsRegex = SettingsPattern },
+            new() { DataModel = new { x = 1 }, QueryParamsRegex = JsonBodyPattern },
+        ];
+        (query, parameters) = AdoNetExt.BuildPositionalParameters("SELECT 1 AS a /* {{ */, {s{c}} AS w, {{b}} AS z", sets);
+
+        Assert.Equal("SELECT 1 AS a /* {{ */, ? AS w, ? AS z", query);
+        Assert.Equal(new object?[] { "C", 2 }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_AStrayOpenMarkerInAComment_DoesNotChangeWhichSourceWins()
+    {
+        // The query-string set is listed after the first body set, so its b wins, comment or no comment.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { b = "2" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { b = "Q" }, QueryParamsRegex = QueryStringPattern },
+            new() { DataModel = new { c = "C" }, QueryParamsRegex = SettingsPattern },
+            new() { DataModel = new { x = 1 }, QueryParamsRegex = JsonBodyPattern },
+        };
+
+        foreach (var query in new[] { "SELECT 1 AS a /* {{ */, {s{c}} AS w, {{b}} AS z", "SELECT 1 AS a, {s{c}} AS w, {{b}} AS z" })
+        {
+            await using var result = await _connection.ExecuteQueryAsync(query, sets);
+            var row = await SingleRowAsync(result);
+            Assert.Equal("Q", (string)row.z);
+            Assert.Contains("Q AS z", query.Fill(sets));
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ASetBetweenSetsWithOnePattern_TakesOnlyPlaceholdersItsPatternMatchesWhereTheyAreWritten()
+    {
+        // The middle set's pattern doesn't match where the placeholder is written (a lookbehind; a stray
+        // marker it pairs the placeholder with), so the earlier set keeps it, as it does without the third set.
+        const string colon = @"(?<open_marker>:)(?<param>\w+)";
+        const string afterSpace = @"(?<=^|[\s(,=])(?<open_marker>:)(?<param>\w+)";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { a = "col0" }, QueryParamsRegex = colon },
+            new() { DataModel = new { a = "lb1" }, QueryParamsRegex = afterSpace },
+            new() { DataModel = null, QueryParamsRegex = colon },
+        };
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT 'x'||:a AS v", sets))
+            Assert.Equal("xcol0", (string)(await SingleRowAsync(result)).v);
+
+        sets =
+        [
+            new() { DataModel = new { id = "body" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { id = "qs" }, QueryParamsRegex = QueryStringPattern },
+            new() { DataModel = null, QueryParamsRegex = JsonBodyPattern },
+        ];
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT '{qs{' || {{id}} AS v", sets))
+            Assert.Equal("{qs{body", (string)(await SingleRowAsync(result)).v);
+    }
+
+    [Fact]
+    public void BuildPositional_ASetBetweenSetsWithOnePattern_TakesAPlaceholderWhereItsPatternMatchesIt()
+    {
+        // The middle set's lookbehind matches ":x" after "=" only: it takes that use, and the earlier set
+        // keeps the other, as without the third set. A ":x" in "a::x" stays the earlier set's.
+        const string colon = @"(?<open_marker>:)(?<param>\w+)(?<close_marker>)";
+        const string afterEquals = @"(?<=[=(]\s*)(?<open_marker>:)(?<param>\w+)(?<close_marker>)";
+        const string notACast = @"(?<![:\w])(?<open_marker>:)(?<param>\w+)(?<close_marker>)";
+        List<DbQueryParams> Sets(string middle) =>
+        [
+            new() { DataModel = new { x = 1 }, QueryParamsRegex = colon },
+            new() { DataModel = new { x = 2 }, QueryParamsRegex = middle },
+            new() { DataModel = new { y = 0 }, QueryParamsRegex = colon },
+        ];
+
+        var (_, parameters) = AdoNetExt.BuildPositionalParameters("SELECT :x AS a, 1 = :x AS b", Sets(afterEquals));
+        Assert.Equal(new object?[] { 1, 2 }, parameters.Select(p => p.Value));
+
+        (_, parameters) = AdoNetExt.BuildPositionalParameters("SELECT a::x", Sets(notACast));
+        Assert.Equal(new object?[] { 1 }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ASetBetweenSetsWithOnePattern_TakesAPlaceholderUnderTheNameItReadsThere()
+    {
+        // The body pattern reads the name "ID " (with its space), the spaced pattern reads "ID".
+        const string spaced = @"(?<open_marker>\{\{)\s*(?<param>\w+)\s*(?<close_marker>\}\})";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new Dictionary<string, object> { ["ID "] = "j0" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { id = "spc1" }, QueryParamsRegex = spaced },
+            new() { DataModel = null, QueryParamsRegex = JsonBodyPattern },
+        };
+
+        await using var result = await _connection.ExecuteQueryAsync("SELECT {{ID }} AS v", sets);
+
+        Assert.Equal("spc1", (string)(await SingleRowAsync(result)).v);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_APlaceholderASetTakes_SharesThatSetsParameterForTheName()
+    {
+        // The body set takes {{id}} from the header set (both read {{ }}); its {j{id}} is the same value.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { id = "H" }, QueryParamsRegex = QueryStringPattern },
+            new() { DataModel = new { id = "B" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { other = 1 }, QueryParamsRegex = QueryStringPattern },
+        };
+
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync("SELECT {{id}} AS g, {j{id}} AS j", sets);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(("B", "B"), ((string)row.g, (string)row.j));
+        AssertParameterNames(command, 1);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ASetWithoutBothMarkersBetweenSetsWithOnePattern_TakesOnlyTheUsesItsPatternMatches()
+    {
+        // A bare-name or one-marker pattern replaces only its own matches, so the set listed between takes
+        // only those: the same answer as with the sets' patterns all different.
+        const string bare = @"\$(?<param>\w+)";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { id = "body" }, QueryParamsRegex = bare },
+            new() { DataModel = new { id = "qs" }, QueryParamsRegex = @"(?<=\()\$(?<param>\w+)" },
+            new() { DataModel = new { other = "x" }, QueryParamsRegex = bare },
+        };
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT $id AS a, ($id) AS b", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal(("body", "qs"), ((string)row.a, (string)row.b));
+        }
+
+        const string colon = @"(?<open_marker>:)(?<param>\w+)";
+        sets =
+        [
+            new() { DataModel = new { d = 10 }, QueryParamsRegex = colon },
+            new() { DataModel = new { d = 20 }, QueryParamsRegex = @"(?<open_marker>:)(?<param>[\w-]+)" },
+            new() { DataModel = new { x = 0 }, QueryParamsRegex = colon },
+        ];
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT :d AS a, :d-1 AS b", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal((20L, 9L), ((long)row.a, (long)row.b));
+        }
+
+        sets =
+        [
+            new() { DataModel = new { id = "B" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { id = "Q" }, QueryParamsRegex = @"(?<=\()\{\{(?<param>\w+)\}\}" },
+            new() { DataModel = new { other = 1 }, QueryParamsRegex = JsonBodyPattern },
+        ];
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT ({{id}}) AS a, {{id}} AS b", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal(("Q", "B"), ((string)row.a, (string)row.b));
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ASetBetweenSetsWithOnePattern_TakesWhatItsOwnPassWouldBind()
+    {
+        // A stray '{{' pairs past {s{k}}'s slot, hiding {{x}} from every reading after it; the body set
+        // listed between still takes {{x}}, as its pattern matches it on its own in the query as written.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = 1 } },
+            new() { DataModel = new { x = 2 }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { y = 0 } },
+            new() { DataModel = new { k = 9 }, QueryParamsRegex = SettingsPattern },
+        };
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT '{{' AS s, {s{k}} AS k, {{x}} AS x", sets))
+            Assert.Equal(2L, (long)(await SingleRowAsync(result)).x);
+
+        // The set listed between binds the plain spelling {{a}} of its spaced {{ a }} too.
+        const string spacedName = @"(?<open_marker>\{\{)\s*(?<param>\w+)\s*(?<close_marker>\}\})";
+        sets =
+        [
+            new() { DataModel = new { a = "body" }, QueryParamsRegex = spacedName },
+            new() { DataModel = new { a = "qs" }, QueryParamsRegex = @"(?<open_marker>\{\{)\s*(?<param>.*?)\s*(?<close_marker>\}\})" },
+            new() { DataModel = new { other = "o" }, QueryParamsRegex = spacedName },
+        ];
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT {{ a }} AS x, '{{' || {{a}} AS y", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal(("qs", "{{qs"), ((string)row.x, (string)row.y));
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_APlaceholderASetTakesAtItsOnlyUse_LeavesNoUnusedParameter()
+    {
+        const string colon = @"(?<open_marker>:)(?<param>\w+)";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { d = 10 }, QueryParamsRegex = colon },
+            new() { DataModel = new { d = 20 }, QueryParamsRegex = @"(?<open_marker>:)(?<param>[\w-]+)" },
+            new() { DataModel = new { x = 0 }, QueryParamsRegex = colon },
+        };
+
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync("SELECT :d AS a", sets);
+
+        Assert.Equal(20L, (long)(await SingleRowAsync(result)).a);
+        AssertParameterNames(command, 1);
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ASetBetweenSetsWithOnePattern_DoesNotTakeByTextWhatALaterListedSetTakesFirst()
+    {
+        // The bare set, listed after the lookbehind set, takes ({{x}}), the lookbehind set's only match; so the
+        // lookbehind set's own pass never reaches the other {{x}}, which stays the first set's.
+        const string afterParenOrEquals = @"(?<=[=(]\s*)(?<open_marker>\{\{)(?<param>\w+)(?<close_marker>\}\})";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { x = "D" } },
+            new() { DataModel = new { x = "B" }, QueryParamsRegex = afterParenOrEquals },
+            new() { DataModel = new { x = "N" }, QueryParamsRegex = @"(?<=\()\{\{(?<param>\w+)\}\}" },
+            new() { DataModel = new { zzz = 1 } },
+        };
+        const string query = "SELECT ({{x}}) AS a, {{x}} AS b";
+
+        await using (var result = await _connection.ExecuteQueryAsync(query, sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal(("N", "D"), ((string)row.a, (string)row.b));
+        }
+        Assert.Equal("SELECT (N) AS a, D AS b", query.Fill(sets));
+        var (_, parameters) = AdoNetExt.BuildPositionalParameters(query, sets);
+        Assert.Equal(new object?[] { "N", "D" }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ASetBetweenSetsWithOnePattern_WhoseOnlyUseALaterListedSetReadsOver_TakesItOnNoPath()
+    {
+        // The {x} set, listed after the body set, reads {id} over its only {{id}} first; so the body set's pass
+        // reaches nothing, on the positional path as on the named path.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { id = "body" } },
+            new() { DataModel = new { id = "j" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { id = "cur" }, QueryParamsRegex = @"(?<open_marker>\{)(?<param>\w+)(?<close_marker>\})" },
+            new() { DataModel = new Dictionary<string, object>() },
+        };
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT {{id}} AS v", sets))
+            Assert.Equal("body", (string)(await SingleRowAsync(result)).v);
+        var (_, parameters) = AdoNetExt.BuildPositionalParameters("SELECT {{id}} AS v", sets);
+        Assert.Equal(new object?[] { "body" }, parameters.Select(p => p.Value));
+
+        // The same with the placeholder recovered from the query as written after a stray '{{'.
+        sets =
+        [
+            new() { DataModel = new { id = "g0" }, QueryParamsRegex = @"(?<open_marker>\{\{)(?<param>[^{}]*)(?<close_marker>\}\})" },
+            new() { DataModel = new { id = "h1" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { id = "q2" }, QueryParamsRegex = @"(?<open_marker>\{)(?<param>\w+)(?<close_marker>\})" },
+            new() { DataModel = new Dictionary<string, object>(), QueryParamsRegex = @"(?<open_marker>\{\{)(?<param>[^{}]*)(?<close_marker>\}\})" },
+            new() { DataModel = new { k = "s4" }, QueryParamsRegex = SettingsPattern },
+        ];
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT '{{' AS a, {s{k}} AS b, {{id}} AS c", sets))
+            Assert.Equal("g0", (string)(await SingleRowAsync(result)).c);
+    }
+
+    [Fact]
+    public void BuildPositional_AStrayMarkerALaterListedSetWouldPairDifferently_KeepsTheEarlierSourcesValue()
+    {
+        // Source 3 replaces {{x}} first in list order; source 2's lazy match from '{{ then runs past that slot to
+        // the "}}" of {{y}} and is skipped, so source 2 never reads {{y}} on this path.
+        const string spaced = @"(?<open_marker>\{\{)\s*(?<param>\w+)\s*(?<close_marker>\}\})";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { y = "s0" }, QueryParamsRegex = spaced },
+            new() { DataModel = new { y = "s1" }, QueryParamsRegex = @"(?<open_marker>\{\{|\{pq\{)(?<param>.*?)?(?<close_marker>\}\})" },
+            new() { DataModel = new { x = "s2" }, QueryParamsRegex = spaced },
+        };
+
+        var (query, parameters) = AdoNetExt.BuildPositionalParameters("SELECT '{{', {{x}}, {{y}}", sets);
+
+        Assert.Equal("SELECT '{{', ?, ?", query);
+        Assert.Equal(new object?[] { "s2", "s0" }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public void BuildPositional_AStrayMarkerPairedPastASlotWrittenEarlier_KeepsTheEarlierSourcesValue()
+    {
+        // As above, with a settings placeholder, read before the others, between the stray '{{' and {{x}}. Source
+        // 2's match from '{{ touches that slot, so its reading skips it; source 3 still makes it pair past {{x}}.
+        const string spaced = @"(?<open_marker>\{\{)\s*(?<param>\w+)\s*(?<close_marker>\}\})";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { y = "s0" }, QueryParamsRegex = spaced },
+            new() { DataModel = new { y = "s1" }, QueryParamsRegex = @"(?<open_marker>\{\{|\{pq\{)(?<param>.*?)?(?<close_marker>\}\})" },
+            new() { DataModel = new { x = "s2" }, QueryParamsRegex = spaced },
+            new() { DataModel = new { k = "s4" }, QueryParamsRegex = SettingsPattern },
+        };
+
+        var (query, parameters) = AdoNetExt.BuildPositionalParameters("SELECT '{{', {s{k}}, {{x}}, {{y}}", sets);
+
+        Assert.Equal("SELECT '{{', ?, ?, ?", query);
+        Assert.Equal(new object?[] { "s4", "s2", "s0" }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public void BuildPositional_ThePairingRule_CountsSourcesUpToTheLastThatSharesThePattern()
+    {
+        // The body set sits between two sets with the headers' pattern, and the settings set's {s{k}} overlaps the
+        // body set's match from the stray '{{'. Listed before the last headers-pattern set, the settings set is read
+        // after the body set's place, so the body set takes nothing; listed after them all (as the engine lists it),
+        // it is read before any of them, its placeholder is a slot in every reading, and the body set takes {{id}}.
+        const string headers = @"(?<open_marker>\{\{|\{h\{)(?<param>.*?)?(?<close_marker>\}\})";
+        const string query = "SELECT {{id}} AS a, '{{' AS s, {s{k}} AS k";
+        DbQueryParams Header() => new() { DataModel = new { id = "H" }, QueryParamsRegex = headers };
+        DbQueryParams Body() => new() { DataModel = new { id = "B" }, QueryParamsRegex = JsonBodyPattern };
+        DbQueryParams Route() => new() { DataModel = new { y = "R" }, QueryParamsRegex = headers };
+        DbQueryParams Settings() => new() { DataModel = new { k = "K" }, QueryParamsRegex = SettingsPattern };
+
+        var (_, between) = AdoNetExt.BuildPositionalParameters(query, [Header(), Body(), Settings(), Route()]);
+        Assert.Equal(new object?[] { "H", "K" }, between.Select(p => p.Value));
+        var (_, last) = AdoNetExt.BuildPositionalParameters(query, [Header(), Body(), Route(), Settings()]);
+        Assert.Equal(new object?[] { "B", "K" }, last.Select(p => p.Value));
+
+        // The last set that shares the pattern counts too: its :date-x overlaps the colon set's :date there.
+        const string dashed = @"(?<open_marker>:)(?<param>[\w-]+)";
+        const string colon = @"(?<open_marker>:)(?<param>\w+)";
+        var (_, sharing) = AdoNetExt.BuildPositionalParameters("SELECT :date AS a, 5>:date-x AS b",
+        [
+            new() { DataModel = new { date = "1" }, QueryParamsRegex = dashed },
+            new() { DataModel = new { date = "2" }, QueryParamsRegex = colon },
+            new() { DataModel = new Dictionary<string, object> { ["date-x"] = "3" }, QueryParamsRegex = dashed },
+        ]);
+        Assert.Equal(new object?[] { "1", "3" }, sharing.Select(p => p.Value));
+
+        // A source listed between counts in the place of the last source with its exact pattern string: with another
+        // settings-pattern source listed after them all, the settings sources are read first, and the body set takes
+        // {{id}}.
+        DbQueryParams MoreSettings() => new() { DataModel = new { z = "Z" }, QueryParamsRegex = SettingsPattern };
+        var (_, readFirst) = AdoNetExt.BuildPositionalParameters(query, [Header(), Body(), Settings(), Route(), MoreSettings()]);
+        Assert.Equal(new object?[] { "B", "K" }, readFirst.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_APlainSpellingASpacedSetNoLongerReaches_KeepsTheEarlierSourcesValue()
+    {
+        // The spaced set sits between two sets with one pattern. The third set fills {{a}} before the spaced set
+        // reads, so the spaced set's stray '{{' pairs past that slot to the close of {{ id }}: in its own place it
+        // never gets {{ id }}, so its pass doesn't replace the plain spelling {{id}} either, and that use keeps hdr.
+        const string plain = @"(?<open_marker>\{\{)(?<param>[^{}]*)(?<close_marker>\}\})";
+        const string spaced = @"(?<open_marker>\{\{)\s*(?<param>.*?)\s*(?<close_marker>\}\})";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { id = "hdr" }, QueryParamsRegex = plain },
+            new() { DataModel = new { id = "body" }, QueryParamsRegex = spaced },
+            new() { DataModel = new { a = "route" }, QueryParamsRegex = plain },
+        };
+        var query = "SELECT '{{' AS s, {{a}} AS a, {{ id }} AS b, '{{' || {{id}} AS c";
+        await using (var result = await _connection.ExecuteQueryAsync(query, sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal("body", (string)row.b);
+            Assert.Equal("{{hdr", (string)row.c);
+        }
+        Assert.Equal("SELECT '{{' AS s, route AS a, body AS b, '{{' || hdr AS c", query.Fill(sets));
+        Assert.Equal("hdr", AdoNetExt.BuildPositionalParameters(query, sets).OrderedParameters.Last().Value);
+
+        // Without the first stray '{{', the spaced set gets {{ id }}, and its pass replaces {{id}} too.
+        query = "SELECT {{a}} AS a, {{ id }} AS b, '{{' || {{id}} AS c";
+        await using (var result = await _connection.ExecuteQueryAsync(query, sets))
+            Assert.Equal("{{body", (string)(await SingleRowAsync(result)).c);
+        Assert.Equal("SELECT route AS a, body AS b, '{{' || body AS c", query.Fill(sets));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_AUseASetBetweenSetsWithOnePatternNeitherMatchesNorRecovers_KeepsTheEarlierSourcesValue()
+    {
+        // The [[...]] set is read first. Then the third set fills {{a}} before the spaced set reads, and the spaced
+        // set's stray '{{' pairs past that slot to the close of {{id}}: in its own place it never gets {{id}}, and in
+        // the query as written the '{{' inside [[{{k]] pairs with that close, so it doesn't recover it either.
+        const string plain = @"(?<open_marker>\{\{)(?<param>[^{}]*)(?<close_marker>\}\})";
+        const string spaced = @"(?<open_marker>\{\{)\s*(?<param>.*?)\s*(?<close_marker>\}\})";
+        const string brackets = @"(?<open_marker>\[\[)(?<param>[^\]]*)(?<close_marker>\]\])";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { id = "hdr" }, QueryParamsRegex = plain },
+            new() { DataModel = new { id = "body" }, QueryParamsRegex = spaced },
+            new() { DataModel = new { a = "route" }, QueryParamsRegex = plain },
+            new() { DataModel = new Dictionary<string, object> { ["{{k"] = "K" }, QueryParamsRegex = brackets },
+        };
+        var query = "SELECT '{{' AS s, {{a}} AS a, [[{{k]] AS x, {{id}} AS c";
+        await using (var result = await _connection.ExecuteQueryAsync(query, sets))
+            Assert.Equal("hdr", (string)(await SingleRowAsync(result)).c);
+        Assert.Equal("SELECT '{{' AS s, route AS a, K AS x, hdr AS c", query.Fill(sets));
+        Assert.Equal("hdr", AdoNetExt.BuildPositionalParameters(query, sets).OrderedParameters.Last().Value);
+
+        // Without the first stray '{{', the spaced set gets {{id}} and takes it.
+        query = "SELECT {{a}} AS a, [[{{k]] AS x, {{id}} AS c";
+        await using (var result = await _connection.ExecuteQueryAsync(query, sets))
+            Assert.Equal("body", (string)(await SingleRowAsync(result)).c);
+        Assert.Equal("SELECT route AS a, K AS x, body AS c", query.Fill(sets));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ALaterSetsTextItsOwnPassNoLongerReaches_DoesNotKeepTheSetBetweenFromIt()
+    {
+        // The lazy set's only {{id}} match is the one in parentheses, which the bare set listed after it takes
+        // first; its stray '{{' then pairs with the close of the second {{id}}. So its pass reaches no {{id}}, and
+        // the second set (the first pattern written another way) takes that use.
+        const string plain = @"(?<open_marker>\{\{)(?<param>[^{}]*)(?<close_marker>\}\})";
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { id = "hdr" }, QueryParamsRegex = plain },
+            new() { DataModel = new { id = "body" }, QueryParamsRegex = plain + "(?:)" },
+            new() { DataModel = new { id = "Q" } },
+            new() { DataModel = new { id = "X" }, QueryParamsRegex = @"(?<=\()\{\{(?<param>\w+)\}\}" },
+            new() { DataModel = new { z = "0" }, QueryParamsRegex = plain },
+        };
+        const string query = "SELECT ({{id}}) AS a, '{{' || {{id}} AS c";
+        await using (var result = await _connection.ExecuteQueryAsync(query, sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal("X", (string)row.a);
+            Assert.Equal("{{body", (string)row.c);
+        }
+        Assert.Equal("SELECT (X) AS a, '{{' || body AS c", query.Fill(sets));
+        Assert.Equal(new object?[] { "X", "body" }, AdoNetExt.BuildPositionalParameters(query, sets).OrderedParameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ALaterBareMatch_LeavesTheOtherUsesToASetBetweenSetsWithOnePattern()
+    {
+        // The bare set replaces only ({{id}}); the body set between the two default-pattern sets takes the other
+        // use, on the named path as on the positional path.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new { id = "hdr" } },
+            new() { DataModel = new { id = "body" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { id = "nm" }, QueryParamsRegex = @"(?<=\()\{\{(?<param>\w+)\}\}" },
+            new() { DataModel = new { z = "route" } },
+        };
+        await using (var result = await _connection.ExecuteQueryAsync("SELECT ({{id}}) AS a, {{id}} AS b", sets))
+        {
+            var row = await SingleRowAsync(result);
+            Assert.Equal("nm", (string)row.a);
+            Assert.Equal("body", (string)row.b);
+        }
+        var (_, parameters) = AdoNetExt.BuildPositionalParameters("SELECT ({{id}}) AS a, {{id}} AS b", sets);
+        Assert.Equal(new object?[] { "nm", "body" }, parameters.Select(p => p.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_ANullSetInTheList_IsSkipped()
+    {
+        var sets = new List<DbQueryParams> { null!, new() { DataModel = new { name = "W" } } };
+
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync("SELECT {{name}} AS v", sets);
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal("W", (string)row.v);
+    }
+
+    [Fact]
     public async Task ExecuteQueryAsync_NamesThatDifferOnlyInCase_AreOneParameter()
     {
         using var command = _connection.CreateCommand();
@@ -1127,9 +1769,9 @@ public class AdoNetExtTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_SetsWithOnePattern_AreMerged_TheLaterValueWinningEvenWhenNull()
+    public async Task ExecuteQueryAsync_SetsWithOnePattern_TheLaterValueWinsEvenWhenNull()
     {
-        // Both sets use the default pattern, so they are one set: the later one's null is the value.
+        // Both sets use the default pattern, so they act as one source: the later one's null is the value.
         // Under a pattern of its own, the later set's null would leave {{x}} to the earlier set.
         var queryParamsList = new List<DbQueryParams>
         {
@@ -1144,10 +1786,10 @@ public class AdoNetExtTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteQueryAsync_SetsWithOnePattern_AreReadInThePlaceOfTheLastOfThem()
+    public async Task ExecuteQueryAsync_SetsWithOnePattern_KeepTheirOwnPlaces()
     {
-        // The first and third sets share a pattern, so they are one set, read in the third's place:
-        // before the second set, whose value for {{x}} it therefore beats.
+        // The first and third sets share a pattern, but the first is still read in its own place:
+        // after the second set, whose value for {{x}} therefore wins.
         var queryParamsList = new List<DbQueryParams>
         {
             new() { DataModel = new { x = "first" }, QueryParamsRegex = JsonBodyPattern },
@@ -1157,7 +1799,85 @@ public class AdoNetExtTests : IDisposable
         await using var result = await _connection.ExecuteQueryAsync("SELECT {{x}} AS x", queryParamsList);
 
         var row = await SingleRowAsync(result);
-        Assert.Equal("first", (string)row.x);
+        Assert.Equal("second", (string)row.x);
+    }
+
+    /// <summary>
+    /// A body set, a query-string set, then an extra set with the body's pattern, whose id is absent,
+    /// null or "O". Expected {{id}}, {j{id}} and {qs{id}}, with "NULL" for a NULL.
+    /// </summary>
+    public static TheoryData<string, string, string, string> SourcePlaceRows => new()
+    {
+        { "absent", "Q", "B", "Q" },
+        { "null", "Q", "NULL", "Q" },
+        { "O", "O", "O", "Q" },
+    };
+
+    internal static List<DbQueryParams> SourcePlaceSets(string extraId) =>
+    [
+        new() { DataModel = new { id = "B" }, QueryParamsRegex = JsonBodyPattern },
+        new() { DataModel = new { id = "Q" }, QueryParamsRegex = QueryStringPattern },
+        new()
+        {
+            DataModel = extraId switch
+            {
+                "absent" => new Dictionary<string, object?>(),
+                "null" => new Dictionary<string, object?> { ["id"] = null },
+                _ => new Dictionary<string, object?> { ["id"] = extraId },
+            },
+            QueryParamsRegex = JsonBodyPattern
+        },
+    ];
+
+    [Theory]
+    [MemberData(nameof(SourcePlaceRows))]
+    public async Task ExecuteQueryAsync_ASetWithAnEarlierSetsPattern_DoesNotMoveThatSetUp(string extraId, string a, string b, string c)
+    {
+        await using var result = await _connection.ExecuteQueryAsync(
+            "SELECT {{id}} AS a, {j{id}} AS b, {qs{id}} AS c", SourcePlaceSets(extraId));
+
+        var row = await SingleRowAsync(result);
+        Assert.Equal(a, (string?)row.a ?? "NULL");
+        Assert.Equal(b, (string?)row.b ?? "NULL");
+        Assert.Equal(c, (string?)row.c ?? "NULL");
+    }
+
+    [Theory]
+    [MemberData(nameof(SourcePlaceRows))]
+    public void BuildPositional_ASetWithAnEarlierSetsPattern_DoesNotMoveThatSetUp(string extraId, string a, string b, string c)
+    {
+        var (_, parameters) = AdoNetExt.BuildPositionalParameters("{{id}} {j{id}} {qs{id}}", SourcePlaceSets(extraId));
+
+        Assert.Equal(new[] { a, b, c }, parameters.Select(p => (string?)p.Value ?? "NULL"));
+    }
+
+    [Fact]
+    public async Task ExecuteQueryAsync_SetsWithOnePattern_AStrayOpenMarkerPairsAsWithOneSet()
+    {
+        // The later set fills {{a}}; the earlier one, reading the text after it, must not pair the stray
+        // "{{" with the "}}" past {{a}}'s slot, which turned the text between them into a NULL.
+        var sets = new List<DbQueryParams>
+        {
+            new() { DataModel = new Dictionary<string, object>(), QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { a = "A" }, QueryParamsRegex = JsonBodyPattern },
+        };
+        await using (var first = await _connection.ExecuteQueryAsync("SELECT {{a}} AS c0, '{{' AS c1, {{a}} AS c2, '}}' AS c3", sets))
+        {
+            var row = await SingleRowAsync(first);
+            Assert.Equal(("A", "{{", "A", "}}"), ((string)row.c0, (string)row.c1, (string)row.c2, (string)row.c3));
+        }
+
+        // The later set fills {{Id}}; the earlier one must still find {{x}} after the stray "{{".
+        sets =
+        [
+            new() { DataModel = new { x = "X" }, QueryParamsRegex = JsonBodyPattern },
+            new() { DataModel = new { Id = "I" }, QueryParamsRegex = JsonBodyPattern },
+        ];
+        await using (var second = await _connection.ExecuteQueryAsync("SELECT '{{' AS c0, {{Id}} AS c1, {{x}} AS c2, {{Id}} AS c3", sets))
+        {
+            var row = await SingleRowAsync(second);
+            Assert.Equal(("{{", "I", "X", "I"), ((string)row.c0, (string)row.c1, (string)row.c2, (string)row.c3));
+        }
     }
 
     [Fact]

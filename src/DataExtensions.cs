@@ -211,14 +211,15 @@ namespace Com.H.Data.Common
             if (queryParamsList == null) return [];
             var comparer = caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
             var result = new List<DbQueryParams>();
+            // A null entry is skipped.
             foreach (var group in (reverse ? queryParamsList.Reverse() : queryParamsList)
+                .Where(x => x is not null)
                 .GroupBy(x => x.QueryParamsRegex))
             {
                 var mergedDataModels = new Dictionary<string, object>(comparer);
 
                 foreach (var queryParams in group)
                 {
-                    if (queryParams is null) continue;
                     foreach (var dataModelItem in queryParams.DataModel?.GetDataModelParameters(reverse, caseSensitive)
                         ?? new Dictionary<string, object>())
                     {
@@ -259,7 +260,44 @@ namespace Com.H.Data.Common
         /// </para>
         /// <para>
         /// <b>Case Sensitivity:</b> By default, parameter name lookup is case-insensitive (caseSensitive = false).
-        /// Set caseSensitive to true for strict case matching when needed.
+        /// Set caseSensitive to true for strict case matching when needed: {{NAME}} is then a different
+        /// placeholder from {{name}}, and is filled only from a NAME value.
+        /// </para>
+        /// <para>
+        /// <b>How placeholders are filled:</b> by the rules the SQL methods bind them with. Each placeholder
+        /// is replaced once, and its value is never read again: text inside a value that looks like a
+        /// placeholder ({{other}}, or another set's marker) stays as it is. One name written with different
+        /// markers of one pattern ({{id}} and {j{id}} under a pattern that accepts both) gets one value.
+        /// With several IEnumerable&lt;DbQueryParams&gt; sets whose patterns match the same placeholder where it
+        /// is written, the latest set in the list with a non-null value under that name fills it. Among sets
+        /// with the exact same pattern string, a later set's value for a name decides, even when it is null;
+        /// a set with another pattern keeps its own place in the list, so one listed between them may take
+        /// one spelling of a name ({{id}}) while the other ({j{id}}) keeps theirs. It takes a placeholder
+        /// where its own pattern reads that same placeholder: with both markers, every use of its text, as its
+        /// own pass would; with one marker or none, only the uses the shared pattern matches there too (not the
+        /// uses it recovers from the text as written after a stray marker). It binds the plain spelling of its
+        /// spaced placeholder ({{id}} for {{ id }}) only where its own pass still has that placeholder, or where
+        /// they have a value for that spelling: not through one it takes from them under another name where they
+        /// have none, nor through one a stray marker pairs past. Where
+        /// it reads a longer or shorter one there (:x-1 against :x), the earlier set's value is used. A placeholder that no set has a value for
+        /// becomes nullReplacementString. A placeholder that no set's pattern matches stays as it is.
+        /// </para>
+        /// <para>
+        /// <b>Where the text is replaced:</b> when the pattern has an open and a close marker, the text a
+        /// placeholder takes up ({{ name }} under a pattern that allows spaces) is replaced wherever it
+        /// appears, once the pattern has matched it on its own somewhere in the text as written. A stray open
+        /// marker before a placeholder's only use pairs with that use's close marker, and the whole span
+        /// between them is then a placeholder of its own; when no set has a value for it, another set's stray
+        /// open marker can take a use of it that way too. If the span holds a placeholder another set has
+        /// filled, the span usually stays as written instead, and a placeholder the pattern never matched on
+        /// its own there stays unfilled. With one marker (":name"), the text is replaced
+        /// wherever it doesn't go on into a longer name: a letter, digit or underscore after it, or a longer
+        /// placeholder the pattern matched (":date" leaves ":date_from" alone, and ":date-from" under a
+        /// pattern that allows "-"). A pattern with neither marker replaces only its matches. A placeholder
+        /// without a value is replaced the same way (the SQL methods bind NULL only where the pattern matches).
+        /// Unless <paramref name="queryParams"/> is null or an empty IEnumerable&lt;DbQueryParams&gt; (the text is
+        /// then returned as it is), text that contains every private-use character (U+E000 to U+F8FF) throws an
+        /// ArgumentException: one is needed to mark the placeholders.
         /// </para>
         /// </remarks>
         /// <param name="input">The template string containing parameter placeholders (e.g., "Hello {{name}}")</param>
@@ -353,63 +391,25 @@ namespace Com.H.Data.Common
             if (string.IsNullOrEmpty(input)) return input ?? "";
             if (queryParamsList == null || !queryParamsList.Any()) return input;
 
-            string result = input;
-            var nullParams = new List<string>();
-
-            foreach (var queryParam in queryParamsList.ReduceToUnique(true, caseSensitive))
+            // The placeholders are found and resolved as on the SQL path: each becomes a slot, and the
+            // values are written into the slots only at the end, so no pattern ever reads a value.
+            var slots = AdoNetExt.ResolveMarkers(input, queryParamsList, replaceText: true, replaceNullText: true,
+                caseSensitive, out var slotText, out var slotDelimiter);
+            var textOfSlot = new string?[slots.Count];
+            return AdoNetExt.FillSlots(slotText, slotDelimiter, slot =>
             {
-                if (queryParam is null) continue;
-
-                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true, caseSensitive);
-                var matchingQueryVars =
-                    Regex.Matches(result, queryParam.QueryParamsRegex)
-                    .Cast<Match>()
-                    .Select(x => new
-                    {
-                        Name = x.Groups["param"].Value,
-                        OpenMarker = x.Groups["open_marker"].Value,
-                        CloseMarker = x.Groups["close_marker"].Value
-                    })
-                    .Where(x => !string.IsNullOrEmpty(x.Name))
-                    .DistinctBy(x => x.Name)
-                    .ToList();
-
-                foreach (var matchingQueryVar in matchingQueryVars)
+                // Converted once per slot (a name in one set), however many times it appears.
+                if (textOfSlot[slot] is null)
                 {
-                    object? matchingDataModelPropertyValue = null;
-                    dataModelProperties?.TryGetValue(matchingQueryVar.Name, out matchingDataModelPropertyValue);
-
-                    var fullPlaceholder = matchingQueryVar.OpenMarker + matchingQueryVar.Name + matchingQueryVar.CloseMarker;
-
-                    if (matchingDataModelPropertyValue is null)
-                    {
-                        nullParams.Add(fullPlaceholder);
-                        continue;
-                    }
-
-                    string replacementValue = valueConverter is not null
-                        ? valueConverter(matchingQueryVar.Name, matchingDataModelPropertyValue)
-                        : matchingDataModelPropertyValue?.ToString() ?? "";
-
-                    result = result.Replace(
-                        fullPlaceholder,
-                        replacementValue,
-                        StringComparison.OrdinalIgnoreCase
-                    );
+                    var (name, _, value) = slots[slot];
+                    textOfSlot[slot] = (value is null
+                        ? nullReplacementString
+                        : valueConverter is not null
+                            ? valueConverter(name, value)
+                            : value.ToString()) ?? "";
                 }
-            }
-
-            // Handle null params
-            foreach (var nullParam in nullParams)
-            {
-                result = result.Replace(
-                    nullParam,
-                    nullReplacementString,
-                    StringComparison.OrdinalIgnoreCase
-                );
-            }
-
-            return result;
+                return textOfSlot[slot]!;
+            });
         }
     }
 }

@@ -499,7 +499,7 @@ namespace Com.H.Data.Common
                 else
                 {
                     // Named parameter path (SQL Server, PostgreSQL, Oracle, SQLite, etc.)
-                    var slots = ResolveMarkers(query, queryParamList, replaceText: true, out var slotText, out var slotDelimiter);
+                    var slots = ResolveMarkers(query, queryParamList, replaceText: true, replaceNullText: false, caseSensitive: false, out var slotText, out var slotDelimiter);
                     var sqlParamNames = new string[slots.Count];
                     // Compared ignoring case: SQL Server and others treat @Email and @email as one name.
                     var usedSqlParamNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -702,12 +702,19 @@ namespace Com.H.Data.Common
         /// appearing multiple times in the query produces multiple entries with the same value.
         /// Placeholders take their values by the named path's rules: when several parameter sets'
         /// patterns match the same placeholder, it is replaced once, with the value of the latest of those
-        /// sets that has a non-null one. Sets with the same pattern string are merged into one first, in
-        /// the place of the last of them, the later set's value winning for a name both have, even when
-        /// it is null. Only the patterns' matches are replaced, though: the named path also replaces the
+        /// sets that has a non-null one. Among sets with the exact same pattern string, a later set's value
+        /// for a name decides, even when it is null; a set with another pattern keeps its own place in the
+        /// list. Only the patterns' matches are replaced, though: the named path also replaces the
         /// text of a placeholder that has a value where its pattern doesn't match it (a use after a stray
         /// "{{" that the pattern pairs with it, or one a pattern skips), so such a use can differ between
-        /// the two. A NULL placeholder is replaced only where its pattern matches it, on both paths.
+        /// the two. A NULL placeholder is replaced only where its pattern matches it, on both paths. And a set
+        /// listed between two with the exact same pattern string takes nothing here where another set with a value
+        /// has a placeholder that overlaps one of its pattern's matches without being the same one (a stray "{{"
+        /// paired past one, ":date-x" where it reads ":date"): the earlier set's value is used. That set counts if
+        /// it is listed after this one and the last set with its exact pattern string is listed no later than the
+        /// last of the two. The placeholders of a set whose last set with its exact pattern string is listed after
+        /// the last of the two are slots before any of the three is read, so they don't count; other sets'
+        /// placeholders are still text then. The overlap is the one in the query as it then stands.
         /// </summary>
         /// <param name="query">The SQL query with placeholders.</param>
         /// <param name="queryParamList">The parameter sets with regex patterns and data models.</param>
@@ -716,7 +723,7 @@ namespace Com.H.Data.Common
         public static (string TransformedQuery, List<(string Name, object? Value)> OrderedParameters)
             BuildPositionalParameters(string query, IEnumerable<DbQueryParams> queryParamList)
         {
-            var slots = ResolveMarkers(query, queryParamList, replaceText: false, out var slotText, out var slotDelimiter);
+            var slots = ResolveMarkers(query, queryParamList, replaceText: false, replaceNullText: false, caseSensitive: false, out var slotText, out var slotDelimiter);
             var orderedParams = new List<(string Name, object? Value)>();
             var transformedQuery = FillSlots(slotText, slotDelimiter, slot =>
             {
@@ -731,119 +738,599 @@ namespace Com.H.Data.Common
         /// </summary>
         /// <remarks>
         /// <para>
-        /// Sets with the same pattern string are first merged into one by ReduceToUnique, in the place of
-        /// the last of them, the later set's value winning for a name both have, even when it is null.
-        /// The resulting parameter sets are
-        /// read last to first. A placeholder takes the value of the latest set whose
-        /// pattern matches it and that has a non-null value under its name (compared ignoring case). A set
-        /// without one leaves the placeholder for the set before it: several sets' patterns can match the
-        /// same placeholder ({{name}} for both a JSON body and a query string, say), and each placeholder
-        /// is replaced only once. A placeholder that no set has a value for becomes NULL, under the latest
-        /// set whose pattern matched it.
+        /// The parameter sets are read last to first. Sets with the exact same pattern string are read as one,
+        /// in the place of the last of them: its value for a name is that of the latest of them that has the
+        /// name, even a null one. A placeholder takes the value of the latest set whose pattern matches it and
+        /// that has a non-null value under its name (compared ignoring case, unless
+        /// <paramref name="caseSensitive"/>; the SQL paths always ignore it). A set without one leaves the
+        /// placeholder for the set before it: several sets' patterns can match the same placeholder ({{name}}
+        /// for both a JSON body and a query string, say), and each placeholder is replaced only once. Where a
+        /// merged set's value comes from one of its earlier sets, a set listed after that one with a non-null
+        /// value under the name its own pattern reads there, and whose pattern reads that placeholder where it
+        /// is written, takes it, as far as that set's own pass would reach: with
+        /// <paramref name="replaceText"/> and a placeholder with both markers, every use of its text, as long as
+        /// its pass still gets a match of it in its own place in the list (a set listed after its source, with a
+        /// value, takes a match first where one of its own matches overlaps it, or with
+        /// <paramref name="replaceText"/> where its text pass replaces it: a text with both markers wherever it
+        /// appears, where that set's own pass still reaches it, a one-marker text where it doesn't go on into a
+        /// longer name, and a match of its own only where it still gets that match once the places taken first are
+        /// slots, or recovers it from the query as written); otherwise the uses its pattern matches where this set's
+        /// pattern matches them too, in the query as it stands (not the placeholders recovered from the query as
+        /// written). Without <paramref name="replaceText"/> (the positional path), it takes nothing where a set
+        /// listed after its source, with a value, in the merged set or in a merged set read after it, has a match
+        /// in the query as it stands that overlaps one of its own matches (those that touch a slot included)
+        /// without being the same placeholder: the slot written first can make it pair its markers differently. The placeholder has a slot of its own, which that set refills when it
+        /// is read, and which is then made one with that set's own slot for the name; a slot the query no
+        /// longer uses is dropped. A null entry in the list is
+        /// skipped. A placeholder that no set has a value for becomes NULL, under the latest set whose pattern
+        /// matched it.
         /// </para>
         /// <para>
-        /// The placeholders of one set whose names differ only in case share one slot. In the returned
+        /// The placeholders of one set with one name share one slot, whichever marker each is written
+        /// with, and so do names that differ only in case unless <paramref name="caseSensitive"/>. In the returned
         /// text each slot is written as its index between two <paramref name="slotDelimiter"/> characters:
         /// a private-use character the query doesn't contain, so text that looks like a slot can't come
-        /// from the query, and the patterns of the sets read after it don't see a parameter name.
+        /// from the query. The patterns of the sets read after it skip any match that touches a slot
+        /// (<see cref="MatchesOutsideSlots"/>). A text that holds every private-use character
+        /// (U+E000 to U+F8FF) leaves none for the delimiter, and an ArgumentException is thrown.
         /// </para>
         /// <para>
         /// With <paramref name="replaceText"/> (the named path), for a pattern with an open and a close
-        /// marker, a resolved placeholder's text (open marker, name, close marker) becomes its slot wherever
-        /// it appears, ignoring case. Otherwise, and for NULL placeholders, the part of each of the
-        /// pattern's matches that <see cref="PlaceholderSpan"/> gives does; on the named path, the text of
-        /// a resolved placeholder with one marker then also does wherever no name character continues it
-        /// (<see cref="ReplaceOneMarkerText"/>). A NULL placeholder's text where the pattern skips it stays.
+        /// marker, a resolved placeholder's text (from its open marker to its close marker, and its plain
+        /// spelling when the pattern takes that for it too) becomes its slot wherever it appears outside the
+        /// slots already written, compared as names are; and so do the placeholders the pattern matches on its
+        /// own in the query as written, which a stray marker may now pair differently. Otherwise, and for NULL placeholders, the part of each of the
+        /// pattern's matches that <see cref="PlaceholderSpan(Match)"/> gives does; on the named path, the text of
+        /// a resolved placeholder with one marker then also does wherever it doesn't go on into a longer name
+        /// (<see cref="ReplaceOneMarkerText"/>). A NULL placeholder's text where the pattern skips it stays,
+        /// unless <paramref name="replaceNullText"/>: then it is replaced as a resolved one's is.
+        /// </para>
+        /// <para>
+        /// DataExtensions.Fill resolves its placeholders here too, with <paramref name="replaceText"/> and
+        /// <paramref name="replaceNullText"/>, and writes the values into the slots at the end, so text
+        /// inside a value is never read as a placeholder.
         /// </para>
         /// </remarks>
-        private static List<(string Name, int Source, object? Value)> ResolveMarkers(
+        internal static List<(string Name, int Source, object? Value)> ResolveMarkers(
             string query,
             IEnumerable<DbQueryParams> queryParamList,
             bool replaceText,
+            bool replaceNullText,
+            bool caseSensitive,
             out string slotText,
             out char slotDelimiter)
         {
-            var delimiter = '\uE000';
-            while (query.IndexOf(delimiter) >= 0)
-            {
-                if (delimiter == '\uF8FF')
-                    throw new ArgumentException("The query contains every Unicode private-use character.", nameof(query));
-                delimiter++;
-            }
+            var comparer = caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+            var comparison = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+            // The first private-use character the text doesn't contain, found in one pass.
+            var present = new bool['\uF8FF' - '\uE000' + 1];
+            foreach (var c in query)
+                if (c >= '\uE000' && c <= '\uF8FF') present[c - '\uE000'] = true;
+            int free = Array.IndexOf(present, false);
+            if (free < 0)
+                throw new ArgumentException("The text contains every Unicode private-use character (U+E000 to U+F8FF), so none is left to mark its placeholders with.");
+            var delimiter = (char)('\uE000' + free);
             string Slot(int index) => delimiter + index.ToString(CultureInfo.InvariantCulture) + delimiter;
 
             var slots = new List<(string Name, int Source, object? Value)>();
-            // Per set, the placeholder names it had no value for.
-            var unresolved = new List<(string QueryParamsRegex, int Source, HashSet<string> Names)>();
-            int source = 0;
-            foreach (var queryParam in queryParamList.ReduceToUnique(true))
+
+            // Whether a pattern takes a text for a placeholder of a name (see IsPlaceholderOf), worked out once each.
+            var placeholderOf = new Dictionary<string, bool>(StringComparer.Ordinal);
+            bool IsPlaceholderOfOnce(string text, string pattern, string name)
             {
-                source++;
-                var dataModelProperties = queryParam.DataModel?.GetDataModelParameters(true);
-                // The slot of each placeholder name this set has resolved, or -1 for one it left for the next set.
-                var slotOfName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                var unresolvedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                // The text of each placeholder this set resolved, as written (open marker, name, close marker).
-                var resolvedText = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var key = pattern + "\0" + text + "\0" + name;
+                if (!placeholderOf.TryGetValue(key, out var result))
+                    placeholderOf[key] = result = IsPlaceholderOf(text, pattern, name, comparer);
+                return result;
+            }
+
+            // The sources, grouped by exact pattern string, null entries skipped. A group is read in the place
+            // of its last source (sources are read last to first), as one source: its value for a name is the
+            // value of its latest source that has the name, even a null one. That source keeps its own place
+            // for the name, though: see the claims below.
+            var groups = new List<SourceGroup>();
+            int listPosition = 0;
+            foreach (var queryParam in queryParamList)
+            {
+                listPosition++;
+                if (queryParam is null) continue;
+                var group = groups.FirstOrDefault(x => string.Equals(x.Pattern, queryParam.QueryParamsRegex, StringComparison.Ordinal));
+                if (group is null)
+                    groups.Add(group = new SourceGroup(queryParam.QueryParamsRegex, comparer));
+                group.Members.Add((listPosition, queryParam.DataModel?.GetDataModelParameters(true, caseSensitive)));
+            }
+            foreach (var group in groups)
+            {
+                group.Last = group.Members[group.Members.Count - 1].Position;
+                for (int i = group.Members.Count - 1; i >= 0; i--)
+                    foreach (var item in group.Members[i].Model ?? new Dictionary<string, object>())
+                    {
+                        if (item.Value is not null && group.Members[i].Position > group.LatestWithAValue)
+                            group.LatestWithAValue = group.Members[i].Position;
+                        if (group.Model.TryAdd(item.Key, item.Value))
+                            group.SupplierOf[item.Key] = group.Members[i].Position;
+                    }
+            }
+            groups.Sort((a, b) => b.Last.CompareTo(a.Last));
+
+            // Per set, the placeholder names it had no value for, (for Fill) their text as written, and the
+            // one-marker placeholders it matched, which a shorter one's text must not be taken from.
+            var unresolved = new List<(string QueryParamsRegex, int Source, HashSet<string> Names,
+                List<(string Text, string Name, bool OpenEmpty, bool CloseEmpty)> Texts, List<string> OneMarkerPlaceholders)>();
+            // Placeholders a group filled from a source that a source listed after it, read later, may take.
+            var claims = new List<SlotClaim>();
+            // Placeholder texts known to be gone from the query (every change turns text into a slot).
+            var absentTexts = new HashSet<string>(comparer);
+            var originalQuery = query;
+            for (int g = 0; g < groups.Count; g++)
+            {
+                var group = groups[g];
+                int source = g + 1;
+                var unresolvedNames = new HashSet<string>(comparer);
+                var valueOfName = new Dictionary<string, object?>(comparer);
+                // The slot of each placeholder name this set has resolved, and of each placeholder a set read after
+                // it may take (keyed by the name and the sets that may take it; see SlotWithClaimants).
+                var slotOfName = new Dictionary<string, int>(comparer);
+                var slotOfClaimKey = new Dictionary<string, int>(comparer);
+                // Only a value from a source before the group's last one can be taken by a set read later.
+                bool mayBeClaimed = g + 1 < groups.Count && group.SupplierOf.Values.Any(x => x < group.Last);
+                // The placeholders each set read later matches in the query as it stands when this one reads, with
+                // the name that set reads there: by place, and (named path and Fill) by text for those with both
+                // markers, whose text that set's own pass replaces wherever it appears.
+                var laterReadings = new Dictionary<int, LaterSetReading>();
+                var plainChecked = new HashSet<string>(StringComparer.Ordinal);
+                var passReaches = new Dictionary<(int, List<(int, int)>), bool>();
+                var pairsDifferently = new Dictionary<(int, int), bool>();
+                var takenPlaces = new Dictionary<(int, int), PlaceSet>();
+                var stillMatched = new Dictionary<(int, int), (HashSet<(int, int)> Spans, bool Skipped, HashSet<string> Texts)>();
+                var originalTexts = new Dictionary<int, HashSet<string>>();
+                var everySpanOf = new Dictionary<int, List<(int Start, int End)>>();
+                var occurrencesOfText = new Dictionary<string, List<(int, int)>>(comparer);
+                // The text of each placeholder this set resolved with both markers, as written.
+                var resolvedText = new Dictionary<string, int>(comparer);
                 bool everyResolvedMatchHasBothMarkers = true;
                 // The same for placeholders with one marker, and which side has none.
-                var oneMarkerText = new Dictionary<string, (int Slot, bool OpenEmpty, bool CloseEmpty)>(StringComparer.OrdinalIgnoreCase);
-                var matches = Regex.Matches(query, queryParam.QueryParamsRegex);
-                foreach (Match m in matches)
+                var oneMarkerText = new Dictionary<string, (int Slot, bool OpenEmpty, bool CloseEmpty)>(comparer);
+                // The one-marker placeholders this reading matched, and the placeholders it had no value for.
+                var oneMarkerPlaceholders = new List<string>();
+                var oneMarkerPlaceholderSeen = new HashSet<string>(comparer);
+                var unresolvedTexts = new List<(string Text, string Name, bool OpenEmpty, bool CloseEmpty)>();
+                var unresolvedTextSeen = new HashSet<string>(comparer);
+
+                object? ValueOf(string name)
                 {
-                    var name = m.Groups["param"].Value;
-                    if (string.IsNullOrEmpty(name)) continue;
+                    if (!valueOfName.TryGetValue(name, out var value))
+                    {
+                        group.Model.TryGetValue(name, out var found);
+                        valueOfName[name] = value = found;
+                        if (value is null) unresolvedNames.Add(name);
+                    }
+                    return value;
+                }
+
+                LaterSetReading LaterReading(int h)
+                {
+                    if (!laterReadings.TryGetValue(h, out var reading))
+                    {
+                        reading = new LaterSetReading(comparer);
+                        var pattern = groups[h].Pattern;
+                        if (pattern is not null)
+                        {
+                            var laterMatches = MatchesOutsideSlots(query, pattern, delimiter, out var skipped);
+                            foreach (var m in laterMatches)
+                            {
+                                var param = m.Groups["param"];
+                                if (param.Length == 0) continue;
+                                var name = param.Value;
+                                var open = m.Groups["open_marker"];
+                                var close = m.Groups["close_marker"];
+                                var (start, end) = PlaceholderSpan(m, open, close, param);
+                                var openMarker = open.Value;
+                                var closeMarker = close.Value;
+                                bool bothMarkers = openMarker.Length > 0 && closeMarker.Length > 0;
+                                reading.BySpan[(start, end)] = (name, bothMarkers);
+                                // A bare name is replaced at its place only. A one-marker text is replaced where it
+                                // doesn't go on into a longer name (see ReplaceOneMarkerText).
+                                if (openMarker.Length == 0 && closeMarker.Length == 0) continue;
+                                if (!bothMarkers)
+                                {
+                                    var oneMarker = openMarker + name + closeMarker;
+                                    if (reading.OneMarkerTextSeen.Add(oneMarker))
+                                    {
+                                        reading.OneMarkerTexts.Add((oneMarker, name, openMarker.Length == 0, closeMarker.Length == 0));
+                                        reading.OneMarkerPlaceholders.Add(oneMarker);
+                                    }
+                                    continue;
+                                }
+                                // Each text that set's pass would replace everywhere, with the matches that make it
+                                // do so (its anchors): the match's own text, and the plain spelling of a spaced one.
+                                var text = query.Substring(start, end - start);
+                                AddAnchor(reading.ByText, text, name, (start, end));
+                                var plain = openMarker + name + closeMarker;
+                                if (!comparer.Equals(plain, text) && IsPlaceholderOfOnce(plain, pattern, name))
+                                    AddAnchor(reading.ByText, plain, name, (start, end));
+                            }
+                            // And the placeholders its pattern matches in the query as written, when a stray marker
+                            // now pairs differently there (see the original reading below).
+                            // Its anchors are the places the text still occurs.
+                            if (replaceText && skipped)
+                                foreach (var placeholder in OriginalReading(originalQuery, pattern, comparer))
+                                    if (!reading.ByText.ContainsKey(placeholder.Text))
+                                    {
+                                        var occurrences = OccurrencesOutsideSlots(query, placeholder.Text, comparison, delimiter);
+                                        if (occurrences.Count > 0)
+                                            reading.ByText[placeholder.Text] = (placeholder.Name, occurrences);
+                                    }
+                        }
+                        laterReadings[h] = reading;
+                    }
+                    return reading;
+                }
+
+                // The sets read later that take a placeholder of the name from this group: each has a value for the
+                // name it reads there, from a source listed after the one this group's value comes from, and its
+                // pattern matches the placeholder where it is written. A set whose placeholder has both markers
+                // replaces its text wherever it appears on the named path and in Fill, so there it takes every use
+                // of that text (byText); otherwise it takes only the uses its pattern matches (at this place).
+                List<(int Group, string Name)>? Claimants(string name, string text, int start, int end, bool byText)
+                {
+                    var supplier = group.SupplierOf[name];
+                    if (!mayBeClaimed || supplier >= group.Last) return null;
+                    List<(int Group, string Name)>? claimants = null;
+                    for (int h = g + 1; h < groups.Count; h++)
+                    {
+                        if (groups[h].LatestWithAValue <= supplier) continue;
+                        var reading = LaterReading(h);
+                        string? laterName = null;
+                        if (byText && reading.ByText.TryGetValue(text, out var atText) && HasValueFromAfter(h, atText.Name, supplier)
+                            && PassReaches(h, atText.Name, text, atText.Anchors))
+                            laterName = atText.Name;
+                        else if (start >= 0 && reading.BySpan.TryGetValue((start, end), out var atSpan)
+                            && !(replaceText && atSpan.BothMarkers) && HasValueFromAfter(h, atSpan.Name, supplier)
+                            // A placeholder with both markers that h replaces by its text (positional path): h's
+                            // pass must still be reached, as on the named path.
+                            && (!atSpan.BothMarkers || PassReaches(h, atSpan.Name, text,
+                                reading.ByText.TryGetValue(text, out var anchorsOfText) ? anchorsOfText.Anchors : new List<(int, int)> { (start, end) })))
+                            laterName = atSpan.Name;
+                        if (laterName is not null && groups[h].SupplierOf.TryGetValue(laterName, out var later)
+                            && later > supplier && groups[h].Model[laterName] is not null
+                            // On the positional path, which has no recovery from the query as written.
+                            && (replaceText || !PairsDifferently(h, later)))
+                            (claimants ??= new List<(int, string)>()).Add((h, laterName));
+                    }
+                    return claimants;
+                }
+
+                // Whether the sources listed after h's source for a name (at supplierOfH) would make h pair its
+                // markers differently from the reading the claims use: one of their matches with a value, read
+                // before h, overlaps one of h's matches without being the same placeholder (a stray marker paired
+                // past it, a longer or shorter placeholder at that place), anywhere in the query as it stands when
+                // this group reads. Those sources are in this group or in a group read after it (q from g on): a
+                // group whose last source is listed after this group's last one is read before this group, so its
+                // placeholders are slots in both readings. Such a match becomes a slot first, and h's reading can
+                // change around it, so on the positional path h takes nothing, and the earlier source's value is
+                // used. h's matches here include those that touch a slot already written: a stray marker paired past
+                // one. (On the named path and in Fill, PassReaches covers this through StillMatched and h's
+                // recovery from the query as written.)
+                bool PairsDifferently(int h, int supplierOfH)
+                {
+                    if (pairsDifferently.TryGetValue((h, supplierOfH), out var cached)) return cached;
+                    if (!everySpanOf.TryGetValue(h, out var spansOfH))
+                    {
+                        spansOfH = new List<(int Start, int End)>();
+                        if (groups[h].Pattern is string patternOfH)
+                            foreach (Match m in Regex.Matches(query, patternOfH))
+                                if (m.Groups["param"].Length > 0)
+                                    spansOfH.Add(PlaceholderSpan(m));
+                        everySpanOf[h] = spansOfH;
+                    }
+                    bool result = false;
+                    for (int q = g; q < groups.Count && !result; q++)
+                    {
+                        if (q == h || groups[q].LatestWithAValue <= supplierOfH) continue;
+                        foreach (var at in LaterReading(q).BySpan)
+                        {
+                            if (!HasValueFromAfter(q, at.Value.Name, supplierOfH)) continue;
+                            // h's matches don't overlap one another, so those overlapping this one are together,
+                            // from the first that ends after its start.
+                            for (int i = FirstEndingAfter(spansOfH, at.Key.Item1); i < spansOfH.Count && spansOfH[i].Item1 < at.Key.Item2; i++)
+                                if (spansOfH[i] != at.Key)
+                                {
+                                    result = true;
+                                    break;
+                                }
+                            if (result) break;
+                        }
+                    }
+                    pairsDifferently[(h, supplierOfH)] = result;
+                    return result;
+                }
+
+                // Whether set h's own pass, in its place in the list, still gets one of the matches that make it
+                // replace a text everywhere (its anchors): a source listed after h's, with a value, whose pattern
+                // matches over that place, is read before h and takes it first. A placeholder h recovers from the
+                // query as written is anchored at the places its text still occurs, and is reached the same way.
+                // An anchor must also survive the places taken first: written as slots, they can make a stray marker
+                // pair past it (see StillMatched). On the named path and in Fill, h's pass still binds a text with
+                // both markers wherever it appears when that reading still matches the text somewhere (a pattern that
+                // takes a character before its marker can match it at another use then), or when that reading
+                // skipped a match and h's pattern matches the text on its own in the query as written (its
+                // recovery); neither binds a plain spelling.
+                bool PassReaches(int h, string laterName, string text, List<(int, int)> anchors)
+                {
+                    if (passReaches.TryGetValue((h, anchors), out var cached)) return cached;
+                    bool reached = PassReachesOnce(h, laterName, text, anchors);
+                    passReaches[(h, anchors)] = reached;
+                    return reached;
+                }
+
+                bool PassReachesOnce(int h, string laterName, string text, List<(int, int)> anchors)
+                {
+                    if (!groups[h].SupplierOf.TryGetValue(laterName, out var supplierOfH)) return false;
+                    var taken = TakenPlaces(h, supplierOfH);
+                    foreach (var (anchorStart, anchorEnd) in anchors)
+                    {
+                        if (taken.Overlaps(anchorStart, anchorEnd)) continue;
+                        var still = StillMatched(h, supplierOfH);
+                        if (still.Spans.Contains((anchorStart, anchorEnd))) return true;
+                        if (replaceText
+                            && anchorEnd - anchorStart == text.Length && string.Compare(query, anchorStart, text, 0, text.Length, comparison) == 0
+                            && (still.Texts.Contains(text) || (still.Skipped && OriginalTexts(h).Contains(text))))
+                            return true;
+                    }
+                    return false;
+                }
+
+                // The texts of the placeholders with both markers that h's pattern matches in the query as written.
+                HashSet<string> OriginalTexts(int h)
+                {
+                    if (!originalTexts.TryGetValue(h, out var texts))
+                    {
+                        texts = new HashSet<string>(comparer);
+                        foreach (var placeholder in OriginalReading(originalQuery, groups[h].Pattern!, comparer))
+                            texts.Add(placeholder.Text);
+                        originalTexts[h] = texts;
+                    }
+                    return texts;
+                }
+
+                // h's matches once the places taken before it (see TakenPlaces) are slots: each written as a slot of
+                // its own length, a place of one character left as it is. And whether that reading skipped a match,
+                // and the texts of its matches with both markers, which h's text pass replaces wherever they appear.
+                (HashSet<(int, int)> Spans, bool Skipped, HashSet<string> Texts) StillMatched(int h, int supplierOfH)
+                {
+                    if (stillMatched.TryGetValue((h, supplierOfH), out var cached)) return cached;
+                    var masked = query.ToCharArray();
+                    foreach (var (start, end) in TakenPlaces(h, supplierOfH).Merged)
+                    {
+                        if (end - start < 2) continue;
+                        masked[start] = masked[end - 1] = delimiter;
+                        for (int i = start + 1; i < end - 1; i++) masked[i] = '0';
+                    }
+                    var matched = new HashSet<(int, int)>();
+                    var texts = new HashSet<string>(comparer);
+                    var maskedMatches = MatchesOutsideSlots(new string(masked), groups[h].Pattern!, delimiter, out var skipped);
+                    foreach (var m in maskedMatches)
+                    {
+                        var (start, end) = PlaceholderSpan(m);
+                        matched.Add((start, end));
+                        if (m.Groups["open_marker"].Length > 0 && m.Groups["close_marker"].Length > 0)
+                            texts.Add(query.Substring(start, end - start));
+                    }
+                    return stillMatched[(h, supplierOfH)] = (matched, skipped, texts);
+                }
+
+                // Whether set q has a value for the name from a source listed after the one at the place given, so
+                // that source is read before it.
+                bool HasValueFromAfter(int q, string name, int place) =>
+                    groups[q].SupplierOf.TryGetValue(name, out var supplierOfQ) && supplierOfQ > place && groups[q].Model[name] is not null;
+
+                // The places that the sources listed after h's source for a name (at supplierOfH) take before h reads:
+                // their matches with a value, this group's own sources included and h left out, and on the named path
+                // and in Fill, what their text passes replace: a text with both markers wherever it appears, where
+                // that set's own pass still reaches it (see PassReaches; this group's own sources read here and
+                // now), and a one-marker text where it doesn't go on into a longer name. A bare name is replaced at
+                // its place only. Worked out once per set and source, and kept while this group reads (the query
+                // doesn't change until it has). PassReaches asks TakenPlaces about a source listed later still, so
+                // the questions end.
+                PlaceSet TakenPlaces(int h, int supplierOfH)
+                {
+                    if (takenPlaces.TryGetValue((h, supplierOfH), out var cached)) return cached;
+                    var places = new List<(int Start, int End)>();
+                    for (int q = g; q < groups.Count; q++)
+                    {
+                        if (q == h || groups[q].LatestWithAValue <= supplierOfH) continue;
+                        var reading = LaterReading(q);
+                        foreach (var at in reading.BySpan)
+                            if (HasValueFromAfter(q, at.Value.Name, supplierOfH))
+                                places.Add(at.Key);
+                        if (!replaceText) continue;
+                        // A slot holds the delimiter and digits only, so a text of digits doesn't count.
+                        foreach (var at in reading.ByText)
+                            if (!IsDigits(at.Key) && HasValueFromAfter(q, at.Value.Name, supplierOfH)
+                                && (q == g || PassReaches(q, at.Value.Name, at.Key, at.Value.Anchors)))
+                                places.AddRange(EveryOccurrence(at.Key));
+                        foreach (var text in reading.OneMarkerTexts)
+                            if (HasValueFromAfter(q, text.Name, supplierOfH))
+                                places.AddRange(OneMarkerTextPlaces(query, text.Text, text.OpenEmpty, text.CloseEmpty,
+                                    comparison, delimiter, reading.OneMarkerPlaceholdersByLength ??= ByLength(reading.OneMarkerPlaceholders, comparison)));
+                    }
+                    var set = new PlaceSet(places);
+                    takenPlaces[(h, supplierOfH)] = set;
+                    return set;
+                }
+
+                // Every place the text occurs in the query, overlapping ones included.
+                List<(int, int)> EveryOccurrence(string text)
+                {
+                    if (!occurrencesOfText.TryGetValue(text, out var occurrences))
+                    {
+                        occurrences = new List<(int, int)>();
+                        for (int index = query.IndexOf(text, comparison); index >= 0; index = query.IndexOf(text, index + 1, comparison))
+                            occurrences.Add((index, index + text.Length));
+                        occurrencesOfText[text] = occurrences;
+                    }
+                    return occurrences;
+                }
+
+                int SlotWithClaimants(string name, object value, List<(int Group, string Name)>? claimants)
+                {
+                    if (claimants is not null)
+                    {
+                        var key = name + "\0" + string.Join("\0", claimants.Select(x => x.Group.ToString(CultureInfo.InvariantCulture) + ":" + x.Name));
+                        if (!slotOfClaimKey.TryGetValue(key, out var claimable))
+                        {
+                            claimable = slots.Count;
+                            slots.Add((name, source, value));
+                            slotOfClaimKey[key] = claimable;
+                            claims.Add(new SlotClaim(claimable, group.SupplierOf[name], claimants));
+                        }
+                        return claimable;
+                    }
                     if (!slotOfName.TryGetValue(name, out var slot))
                     {
-                        object? value = null;
-                        dataModelProperties?.TryGetValue(name, out value);
-                        if (value is null)
-                        {
-                            slot = -1;
-                            unresolvedNames.Add(name);
-                        }
-                        else
-                        {
-                            slot = slots.Count;
-                            slots.Add((name, source, value));
-                        }
+                        slot = slots.Count;
+                        slots.Add((name, source, value));
                         slotOfName.Add(name, slot);
                     }
-                    if (slot < 0) continue;
-                    var openMarker = m.Groups["open_marker"].Value;
-                    var closeMarker = m.Groups["close_marker"].Value;
-                    if (openMarker.Length > 0 && closeMarker.Length > 0)
-                        resolvedText[openMarker + name + closeMarker] = slot;
+                    return slot;
+                }
+
+                // The slot a placeholder's text gets wherever this group's text passes replace it (named path and Fill).
+                int TextSlot(string name, string text)
+                {
+                    var value = ValueOf(name);
+                    return value is null ? -1 : SlotWithClaimants(name, value, Claimants(name, text, -1, -1, byText: replaceText));
+                }
+
+                // The slot of one of this group's matches: also taken by a set read later that matches it at its place.
+                int MatchSlot(string name, string text, int start, int end)
+                {
+                    var value = ValueOf(name);
+                    return value is null ? -1 : SlotWithClaimants(name, value, Claimants(name, text, start, end, byText: replaceText));
+                }
+
+                void Bind((string Text, string Name, bool OpenEmpty, bool CloseEmpty) placeholder, int slot)
+                {
+                    if (slot < 0)
+                    {
+                        if (replaceNullText && unresolvedTextSeen.Add(placeholder.Text))
+                            unresolvedTexts.Add(placeholder);
+                    }
+                    else if (!placeholder.OpenEmpty && !placeholder.CloseEmpty)
+                        resolvedText[placeholder.Text] = slot;
                     else
                     {
                         everyResolvedMatchHasBothMarkers = false;
-                        if (openMarker.Length > 0 || closeMarker.Length > 0)
-                            oneMarkerText[openMarker + name + closeMarker] = (slot, openMarker.Length == 0, closeMarker.Length == 0);
+                        oneMarkerText[placeholder.Text] = (slot, placeholder.OpenEmpty, placeholder.CloseEmpty);
+                    }
+                }
+
+                var matches = MatchesOutsideSlots(query, group.Pattern!, delimiter, out bool skippedAMatch);
+                // Each match's slot, and the slot its text gets where this group's text passes replace it; they
+                // differ when a set read later takes this match at its place only (see Claimants).
+                var slotOfMatch = new int[matches.Count];
+                var textSlotOfMatch = new int[matches.Count];
+                for (int i = 0; i < matches.Count; i++)
+                {
+                    var m = matches[i];
+                    slotOfMatch[i] = textSlotOfMatch[i] = -1;
+                    var name = m.Groups["param"].Value;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    var openMarker = m.Groups["open_marker"].Value;
+                    var closeMarker = m.Groups["close_marker"].Value;
+                    var (start, end) = PlaceholderSpan(m);
+                    var spanText = query.Substring(start, end - start);
+                    int slot = slotOfMatch[i] = MatchSlot(name, spanText, start, end);
+                    if (openMarker.Length == 0 && closeMarker.Length == 0)
+                    {
+                        // A bare name: only the pattern's match is replaced, below.
+                        if (slot >= 0) everyResolvedMatchHasBothMarkers = false;
+                        continue;
+                    }
+                    bool bothMarkers = openMarker.Length > 0 && closeMarker.Length > 0;
+                    // With both markers, the text the placeholder takes up, so a pattern that allows text
+                    // between a marker and the name ({{ name }}) has it replaced too.
+                    var placeholder = (Text: bothMarkers ? spanText : openMarker + name + closeMarker,
+                        Name: name, OpenEmpty: openMarker.Length == 0, CloseEmpty: closeMarker.Length == 0);
+                    if (!bothMarkers && oneMarkerPlaceholderSeen.Add(placeholder.Text)) oneMarkerPlaceholders.Add(placeholder.Text);
+                    var textSlot = textSlotOfMatch[i] = slot < 0 ? -1 : TextSlot(name, placeholder.Text);
+                    Bind(placeholder, textSlot);
+
+                    // And its plain spelling ({{name}} for {{ name }}), when the pattern takes that for a
+                    // placeholder of the name too: a stray "{{" may hide that spelling's use.
+                    var plain = openMarker + name + closeMarker;
+                    if (replaceText && bothMarkers && !comparer.Equals(plain, spanText) && plainChecked.Add(plain + "\0" + name)
+                        && !resolvedText.ContainsKey(plain) && !unresolvedTextSeen.Contains(plain) && !absentTexts.Contains(plain)
+                        && IsPlaceholderOf(plain, group.Pattern!, name, comparer))
+                    {
+                        if (OccursOutsideSlots(query, plain, comparison, delimiter))
+                            Bind((plain, name, false, false), TextSlot(name, plain));
+                        else
+                            absentTexts.Add(plain);
+                    }
+                }
+
+                if (replaceText && skippedAMatch)
+                {
+                    // The placeholders the pattern matches in the query as written are bound by their text too
+                    // (with both markers), so a stray "{{" that now pairs differently, past a placeholder a set
+                    // read before this one replaced, can't hide them. Only such a pairing makes this reading
+                    // skip a match, so without one there is nothing to recover.
+                    foreach (var placeholder in OriginalReading(originalQuery, group.Pattern!, comparer))
+                    {
+                        if (resolvedText.ContainsKey(placeholder.Text) || unresolvedTextSeen.Contains(placeholder.Text)
+                            || absentTexts.Contains(placeholder.Text))
+                            continue;
+                        if (ValueOf(placeholder.Name) is null && !replaceNullText) continue;
+                        if (!OccursOutsideSlots(query, placeholder.Text, comparison, delimiter))
+                        {
+                            absentTexts.Add(placeholder.Text);
+                            continue;
+                        }
+                        Bind(placeholder, TextSlot(placeholder.Name, placeholder.Text));
                     }
                 }
 
                 if (replaceText && everyResolvedMatchHasBothMarkers)
                 {
-                    // Named path: a resolved placeholder's text is replaced wherever it appears, ignoring
-                    // case, not only where the pattern matched it. Queries the pattern pairs oddly rely on
+                    // A match that a set read later takes at its place only is replaced there first, so the text
+                    // pass below gives the other uses of its text this group's slot.
+                    if (Enumerable.Range(0, matches.Count).Any(i => slotOfMatch[i] != textSlotOfMatch[i]))
+                    {
+                        var replaced = new System.Text.StringBuilder(query.Length);
+                        int position = 0;
+                        for (int i = 0; i < matches.Count; i++)
+                        {
+                            if (slotOfMatch[i] == textSlotOfMatch[i]) continue;
+                            var (start, end) = PlaceholderSpan(matches[i]);
+                            replaced.Append(query, position, start - position);
+                            replaced.Append(Slot(slotOfMatch[i]));
+                            position = end;
+                        }
+                        replaced.Append(query, position, query.Length - position);
+                        query = replaced.ToString();
+                    }
+                    // Named path: a resolved placeholder's text is replaced wherever it appears (ignoring
+                    // case unless caseSensitive), not only where the pattern matched it. Queries the pattern pairs oddly rely on
                     // that: a stray "{{" in a literal before a second {{id}} (the pattern pairs them, so
                     // that {{id}} is no match of its own), a pipe operator beside |a| delimiters, or a
                     // pattern that also matches the character before the marker.
                     foreach (var text in resolvedText)
-                        query = query.Replace(text.Key, Slot(text.Value), StringComparison.OrdinalIgnoreCase);
+                        query = ReplaceOutsideSlots(query, text.Key, Slot(text.Value), comparison, delimiter);
                 }
-                else if (slotOfName.Values.Any(slot => slot >= 0))
+                else if (slotOfMatch.Any(slot => slot >= 0) || resolvedText.Count > 0 || oneMarkerText.Count > 0)
                 {
                     // The pattern's matches are replaced (see PlaceholderSpan for which part of each).
                     var replaced = new System.Text.StringBuilder(query.Length);
                     int position = 0;
-                    foreach (Match m in matches)
+                    for (int i = 0; i < matches.Count; i++)
                     {
-                        var name = m.Groups["param"].Value;
-                        if (string.IsNullOrEmpty(name) || slotOfName[name] < 0) continue;
-                        var (start, end) = PlaceholderSpan(m);
+                        if (slotOfMatch[i] < 0) continue;
+                        var (start, end) = PlaceholderSpan(matches[i]);
                         replaced.Append(query, position, start - position);
-                        replaced.Append(Slot(slotOfName[name]));
+                        replaced.Append(Slot(slotOfMatch[i]));
                         position = end;
                     }
                     replaced.Append(query, position, query.Length - position);
@@ -854,33 +1341,125 @@ namespace Com.H.Data.Common
                         // Named path, a pattern with a one-marker alternative: its two-marker placeholders
                         // are bound by their text as above, and its one-marker ones by guarded text.
                         foreach (var text in resolvedText)
-                            query = query.Replace(text.Key, Slot(text.Value), StringComparison.OrdinalIgnoreCase);
-                        query = ReplaceOneMarkerText(query, oneMarkerText, Slot);
+                            query = ReplaceOutsideSlots(query, text.Key, Slot(text.Value), comparison, delimiter);
+                        query = ReplaceOneMarkerText(query, oneMarkerText, Slot, comparison, delimiter, oneMarkerPlaceholders);
                     }
                 }
+
+                // This group takes the placeholders that a group read before it filled from a source listed
+                // before this group's source for the name, where its pattern matched them or by text where its own
+                // pass still reaches them (see Claimants and PassReaches), under
+                // the name it reads there; of several such groups, the one whose source is listed last.
+                foreach (var claim in claims)
+                {
+                    foreach (var (claimant, laterName) in claim.Claimants)
+                    {
+                        if (claimant != g) continue;
+                        var supplier = group.SupplierOf[laterName];
+                        if (supplier <= claim.Supplier) continue;
+                        slots[claim.Slot] = (laterName, source, group.Model[laterName]);
+                        claim.Supplier = supplier;
+                    }
+                }
+
                 if (unresolvedNames.Count > 0)
-                    unresolved.Add((queryParam.QueryParamsRegex, source, unresolvedNames));
+                    unresolved.Add((group.Pattern!, source, unresolvedNames, unresolvedTexts,
+                        oneMarkerPlaceholders.Distinct(comparer).ToList()));
             }
 
             // What no set had a value for is NULL. Matching again finds only the placeholders still in
             // the query: one a later set resolved is a slot by now, and gets no NULL parameter. Only the
             // pattern's matches become NULL: text the pattern skips (":token" in 'session:token') stays.
-            foreach (var (queryParamsRegex, unresolvedSource, names) in unresolved)
+            foreach (var (queryParamsRegex, unresolvedSource, names, texts, oneMarkerPlaceholders) in unresolved)
             {
-                var slotOfName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                query = Regex.Replace(query, queryParamsRegex, m =>
+                var slotOfName = new Dictionary<string, int>(comparer);
+                int NullSlot(string name)
                 {
-                    var name = m.Groups["param"].Value;
-                    if (!names.Contains(name)) return m.Value;
                     if (!slotOfName.TryGetValue(name, out var slot))
                     {
                         slot = slots.Count;
                         slots.Add((name, unresolvedSource, null));
                         slotOfName.Add(name, slot);
                     }
+                    return slot;
+                }
+
+                if (replaceNullText)
+                {
+                    // Fill: a NULL placeholder's text is replaced as a resolved one's is, wherever it appears
+                    // with both markers, and with one wherever it doesn't go on into a longer name. So a stray
+                    // "{{" before a second use of that placeholder can't hide it. A text that lies inside a longer
+                    // one goes first, so a stray marker's span that holds a placeholder is gone by the time its
+                    // own text comes up; the others keep the order the pattern matched them in.
+                    var oneMarkerNullText = new Dictionary<string, (int Slot, bool OpenEmpty, bool CloseEmpty)>(comparer);
+                    var ordered = new List<(string Text, string Name, bool OpenEmpty, bool CloseEmpty)>();
+                    var emitted = new bool[texts.Count];
+                    void Emit(int i)
+                    {
+                        if (emitted[i]) return;
+                        emitted[i] = true;
+                        for (int j = 0; j < texts.Count; j++)
+                            if (texts[j].Text.Length < texts[i].Text.Length && texts[i].Text.IndexOf(texts[j].Text, comparison) >= 0)
+                                Emit(j);
+                        ordered.Add(texts[i]);
+                    }
+                    for (int i = 0; i < texts.Count; i++)
+                        Emit(i);
+                    foreach (var text in ordered)
+                    {
+                        if (absentTexts.Contains(text.Text)) continue;
+                        if (!OccursOutsideSlots(query, text.Text, comparison, delimiter))
+                        {
+                            absentTexts.Add(text.Text);
+                            continue;
+                        }
+                        if (!text.OpenEmpty && !text.CloseEmpty)
+                            query = ReplaceOutsideSlots(query, text.Text, Slot(NullSlot(text.Name)), comparison, delimiter);
+                        else
+                            oneMarkerNullText[text.Text] = (NullSlot(text.Name), text.OpenEmpty, text.CloseEmpty);
+                    }
+                    query = ReplaceOneMarkerText(query, oneMarkerNullText, Slot, comparison, delimiter, oneMarkerPlaceholders);
+                }
+
+                var replaced = new System.Text.StringBuilder(query.Length);
+                int position = 0;
+                foreach (var m in MatchesOutsideSlots(query, queryParamsRegex, delimiter, out _))
+                {
+                    var name = m.Groups["param"].Value;
+                    if (!names.Contains(name)) continue;
                     var (start, end) = PlaceholderSpan(m);
-                    return m.Value.Substring(0, start - m.Index) + Slot(slot) + m.Value.Substring(end - m.Index);
-                });
+                    replaced.Append(query, position, start - position);
+                    replaced.Append(Slot(NullSlot(name)));
+                    position = end;
+                }
+                replaced.Append(query, position, query.Length - position);
+                query = replaced.ToString();
+            }
+
+            // A name a set filled from one source has one slot, though a claim (see Claimants) can leave it two:
+            // the claimed placeholder's and the set's own. They hold the same value, so they are made one, for
+            // one SQL parameter and one valueConverter call. A slot the query doesn't use (one a claim took all
+            // of a text's uses from) is dropped, so it makes no unused parameter.
+            var used = new bool[slots.Count];
+            FillSlots(query, delimiter, slot => { used[slot] = true; return ""; });
+            var slotOfSourceName = new Dictionary<(int Source, string Name), int>(new SourceNameComparer(comparer));
+            var newIndex = new int[slots.Count];
+            var merged = new List<(string Name, int Source, object? Value)>();
+            for (int i = 0; i < slots.Count; i++)
+            {
+                if (!used[i]) continue;
+                if (!slotOfSourceName.TryGetValue((slots[i].Source, slots[i].Name), out var index))
+                {
+                    index = merged.Count;
+                    merged.Add(slots[i]);
+                    slotOfSourceName[(slots[i].Source, slots[i].Name)] = index;
+                }
+                newIndex[i] = index;
+            }
+            if (merged.Count < slots.Count)
+            {
+                query = FillSlots(query, delimiter, slot => Slot(newIndex[slot]));
+                slots = merged;
             }
 
             slotText = query;
@@ -888,36 +1467,370 @@ namespace Com.H.Data.Common
             return slots;
         }
 
+        private sealed class SourceNameComparer : IEqualityComparer<(int Source, string Name)>
+        {
+            private readonly StringComparer _names;
+            public SourceNameComparer(StringComparer names) => _names = names;
+            public bool Equals((int Source, string Name) x, (int Source, string Name) y) => x.Source == y.Source && _names.Equals(x.Name, y.Name);
+            public int GetHashCode((int Source, string Name) x) => x.Source * 397 ^ _names.GetHashCode(x.Name);
+        }
+
+        /// <summary>The sources with one pattern string, read as one in the place of the last of them.</summary>
+        private sealed class SourceGroup
+        {
+            public SourceGroup(string? pattern, StringComparer comparer)
+            {
+                Pattern = pattern;
+                Model = new Dictionary<string, object?>(comparer);
+                SupplierOf = new Dictionary<string, int>(comparer);
+            }
+
+            public string? Pattern { get; }
+            public List<(int Position, IDictionary<string, object>? Model)> Members { get; } = new();
+            /// <summary>Each name's value: that of the latest source that has the name, even a null one.</summary>
+            public Dictionary<string, object?> Model { get; }
+            /// <summary>The place in the list of the source each name's value comes from.</summary>
+            public Dictionary<string, int> SupplierOf { get; }
+            /// <summary>The place in the list of the group's last source.</summary>
+            public int Last { get; set; }
+            /// <summary>The place in the list of the group's last source with a non-null value: no claim comes from further up.</summary>
+            public int LatestWithAValue { get; set; }
+        }
+
+        /// <summary>A placeholder's slot that a group read later may still take (see ResolveMarkers).</summary>
+        private sealed class SlotClaim
+        {
+            public SlotClaim(int slot, int supplier, List<(int Group, string Name)> claimants)
+            {
+                Slot = slot;
+                Supplier = supplier;
+                Claimants = claimants;
+            }
+
+            public int Slot { get; }
+            /// <summary>The place in the list of the source whose value the slot holds now.</summary>
+            public int Supplier { get; set; }
+            /// <summary>The groups read later whose pattern matched the placeholder, and the name each read there.</summary>
+            public List<(int Group, string Name)> Claimants { get; }
+        }
+
+        /// <summary>How a group read later reads the query as it stands when another group reads (see ResolveMarkers).</summary>
+        private sealed class LaterSetReading
+        {
+            public LaterSetReading(StringComparer comparer)
+            {
+                ByText = new Dictionary<string, (string Name, List<(int, int)> Anchors)>(comparer);
+                OneMarkerTextSeen = new HashSet<string>(comparer);
+            }
+
+            /// <summary>
+            /// The texts with both markers that its pass replaces wherever they appear, with the name it reads and
+            /// the places that make it do so (its anchors).
+            /// </summary>
+            public Dictionary<string, (string Name, List<(int, int)> Anchors)> ByText { get; }
+            /// <summary>Its matches outside slots, by place, with the name it reads there and whether the match has both markers.</summary>
+            public Dictionary<(int, int), (string Name, bool BothMarkers)> BySpan { get; } = new();
+            /// <summary>The texts of its one-marker matches, once each, which its guarded pass replaces (see ReplaceOneMarkerText).</summary>
+            public List<(string Text, string Name, bool OpenEmpty, bool CloseEmpty)> OneMarkerTexts { get; } = new();
+            public HashSet<string> OneMarkerTextSeen { get; }
+            /// <summary>Its one-marker placeholders, once each, which a shorter one's text isn't replaced inside.</summary>
+            public List<string> OneMarkerPlaceholders { get; } = new();
+            /// <summary>The same by length (see ByLength), built when first needed.</summary>
+            public Dictionary<int, HashSet<string>>? OneMarkerPlaceholdersByLength { get; set; }
+        }
+
+        /// <summary>Places in a text, each from a start to an end, that say whether any of them overlaps a place.</summary>
+        private sealed class PlaceSet
+        {
+            private readonly int[] _starts;
+            // The furthest end among the places up to each one, in order of their starts.
+            private readonly int[] _furthestEnds;
+
+            public PlaceSet(List<(int Start, int End)> places)
+            {
+                places.Sort((a, b) => a.Start.CompareTo(b.Start));
+                _starts = new int[places.Count];
+                _furthestEnds = new int[places.Count];
+                int furthest = int.MinValue;
+                for (int i = 0; i < places.Count; i++)
+                {
+                    _starts[i] = places[i].Start;
+                    _furthestEnds[i] = furthest = Math.Max(furthest, places[i].End);
+                    if (Merged.Count > 0 && places[i].Start < Merged[Merged.Count - 1].End)
+                        Merged[Merged.Count - 1] = (Merged[Merged.Count - 1].Start, Math.Max(Merged[Merged.Count - 1].End, places[i].End));
+                    else
+                        Merged.Add(places[i]);
+                }
+            }
+
+            /// <summary>The places, those that overlap made one, in order.</summary>
+            public List<(int Start, int End)> Merged { get; } = new();
+
+            public bool Overlaps(int start, int end)
+            {
+                // The places that start before the end given: one of them overlaps if it ends after the start.
+                int low = 0, high = _starts.Length;
+                while (low < high)
+                {
+                    int middle = low + (high - low) / 2;
+                    if (_starts[middle] < end) low = middle + 1;
+                    else high = middle;
+                }
+                return low > 0 && _furthestEnds[low - 1] > start;
+            }
+        }
+
+        /// <summary>The first of the places (in order, none overlapping another) that ends after <paramref name="position"/>.</summary>
+        private static int FirstEndingAfter(List<(int Start, int End)> places, int position)
+        {
+            int low = 0, high = places.Count;
+            while (low < high)
+            {
+                int middle = low + (high - low) / 2;
+                if (places[middle].End <= position) low = middle + 1;
+                else high = middle;
+            }
+            return low;
+        }
+
+        /// <summary>
+        /// Whether the pattern takes <paramref name="text"/>, all of it, for a placeholder of
+        /// <paramref name="name"/>: on its own, or between spaces for a pattern that wants a character
+        /// before or after its markers.
+        /// </summary>
+        private static bool IsPlaceholderOf(string text, string? pattern, string name, StringComparer comparer)
+        {
+            if (pattern is null) return false;
+            foreach (var (candidate, offset) in new[] { (text, 0), (" " + text + " ", 1) })
+                foreach (Match m in Regex.Matches(candidate, pattern))
+                {
+                    var (start, end) = PlaceholderSpan(m);
+                    if (start == offset && end == offset + text.Length && comparer.Equals(m.Groups["param"].Value, name))
+                        return true;
+                }
+            return false;
+        }
+
+        /// <summary>Records that a match at <paramref name="anchor"/> makes a set's pass replace <paramref name="text"/> everywhere.</summary>
+        private static void AddAnchor(Dictionary<string, (string Name, List<(int, int)> Anchors)> byText, string text, string name, (int, int) anchor)
+        {
+            if (byText.TryGetValue(text, out var entry))
+                entry.Anchors.Add(anchor);
+            else
+                byText[text] = (name, new List<(int, int)> { anchor });
+        }
+
+        /// <summary>The placeholders with both markers that the pattern matches in the query as written, once each.</summary>
+        private static List<(string Text, string Name, bool OpenEmpty, bool CloseEmpty)> OriginalReading(
+            string originalQuery, string pattern, StringComparer comparer)
+        {
+            var result = new List<(string Text, string Name, bool OpenEmpty, bool CloseEmpty)>();
+            var seen = new HashSet<string>(comparer);
+            foreach (Match m in Regex.Matches(originalQuery, pattern))
+            {
+                var name = m.Groups["param"].Value;
+                if (string.IsNullOrEmpty(name) || m.Groups["open_marker"].Length == 0 || m.Groups["close_marker"].Length == 0)
+                    continue;
+                var (start, end) = PlaceholderSpan(m);
+                var text = originalQuery.Substring(start, end - start);
+                if (seen.Add(text))
+                    result.Add((text, name, false, false));
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// The pattern's matches in <paramref name="text"/>, without those whose placeholder part (see
+        /// <see cref="PlaceholderSpan(Match)"/>) touches a slot already written. Such a match is skipped and the
+        /// search goes on after it, so the markers pair as they do in the text with its slots. A later set's
+        /// pattern then can't read a slot's index as a name (\d+, \w+), and a stray "{{" that pairs with a
+        /// marker past a slot doesn't make the text between them, slot included, a placeholder of its own.
+        /// </summary>
+        private static List<Match> MatchesOutsideSlots(string text, string pattern, char delimiter, out bool skipped)
+        {
+            var result = new List<Match>();
+            skipped = false;
+            // The slot delimiters' positions, in order: a slot runs from an even-numbered one to the next.
+            var delimiters = new List<int>();
+            for (int i = text.IndexOf(delimiter); i >= 0; i = text.IndexOf(delimiter, i + 1))
+                delimiters.Add(i);
+
+            int DelimitersBefore(int index)
+            {
+                var at = delimiters.BinarySearch(index);
+                return at >= 0 ? at : ~at;
+            }
+
+            foreach (Match m in Regex.Matches(text, pattern))
+            {
+                if (delimiters.Count > 0)
+                {
+                    var (start, end) = PlaceholderSpan(m);
+                    int before = DelimitersBefore(start);
+                    if (before % 2 == 1 || DelimitersBefore(end) != before)
+                    {
+                        skipped = true;
+                        continue;
+                    }
+                }
+                result.Add(m);
+            }
+            return result;
+        }
+
+        /// <summary>Whether the text before <paramref name="index"/> leaves it inside a slot, counted on from <paramref name="scanned"/>.</summary>
+        private static bool InsideSlotAt(string query, char delimiter, int index, ref int scanned, ref bool insideSlot)
+        {
+            for (int d = query.IndexOf(delimiter, scanned, index - scanned); d >= 0; d = query.IndexOf(delimiter, scanned, index - scanned))
+            {
+                insideSlot = !insideSlot;
+                scanned = d + 1;
+            }
+            scanned = index;
+            return insideSlot;
+        }
+
+        /// <summary>
+        /// Replaces each occurrence of <paramref name="text"/> that is outside the slots already written.
+        /// The text holds no delimiter, so an occurrence that starts inside a slot (a marker made of digits,
+        /// say) lies wholly inside it, and stays.
+        /// </summary>
+        private static string ReplaceOutsideSlots(string query, string text, string replacement, StringComparison comparison, char delimiter)
+        {
+            // A slot holds the delimiter and digits only, so only a text made of digits can lie inside one.
+            if (!IsDigits(text)) return query.Replace(text, replacement, comparison);
+            int index = query.IndexOf(text, comparison);
+            if (index < 0) return query;
+            var replaced = new System.Text.StringBuilder(query.Length);
+            int position = 0, scanned = 0;
+            bool insideSlot = false;
+            while (index >= 0)
+            {
+                replaced.Append(query, position, index - position);
+                if (InsideSlotAt(query, delimiter, index, ref scanned, ref insideSlot)) replaced.Append(query, index, text.Length);
+                else replaced.Append(replacement);
+                position = index + text.Length;
+                index = query.IndexOf(text, position, comparison);
+            }
+            replaced.Append(query, position, query.Length - position);
+            return replaced.ToString();
+        }
+
+        /// <summary>Whether the text is made of ASCII digits only, as a slot's index is.</summary>
+        private static bool IsDigits(string text)
+        {
+            foreach (var c in text)
+                if (c < '0' || c > '9') return false;
+            return text.Length > 0;
+        }
+
+        /// <summary>The places <paramref name="text"/> occurs outside the slots already written.</summary>
+        private static List<(int, int)> OccurrencesOutsideSlots(string query, string text, StringComparison comparison, char delimiter)
+        {
+            var result = new List<(int, int)>();
+            int scanned = 0;
+            bool insideSlot = false, digits = IsDigits(text);
+            for (int index = query.IndexOf(text, comparison); index >= 0; index = query.IndexOf(text, index + text.Length, comparison))
+                if (!(digits && InsideSlotAt(query, delimiter, index, ref scanned, ref insideSlot)))
+                    result.Add((index, index + text.Length));
+            return result;
+        }
+
+        /// <summary>Whether <paramref name="text"/> occurs outside the slots already written.</summary>
+        private static bool OccursOutsideSlots(string query, string text, StringComparison comparison, char delimiter)
+        {
+            if (!IsDigits(text)) return query.IndexOf(text, comparison) >= 0;
+            int scanned = 0;
+            bool insideSlot = false;
+            for (int index = query.IndexOf(text, comparison); index >= 0; index = query.IndexOf(text, index + 1, comparison))
+                if (!InsideSlotAt(query, delimiter, index, ref scanned, ref insideSlot))
+                    return true;
+            return false;
+        }
+
         /// <summary>
         /// Named path, a pattern with one marker (":name"): as with two markers, a placeholder's text is
         /// also replaced where the pattern didn't match it ("1-:a" under a pattern that lists the
-        /// characters allowed before the colon), ignoring case as names are compared everywhere else
-        /// (ordinal), but only where no name character continues it on the side without a marker, so
-        /// ":a" leaves ":ab" alone and "a$" leaves "ba$" alone.
+        /// characters allowed before the colon), compared as names are everywhere else (ordinal, and
+        /// ignoring case unless the comparison says otherwise), but not where it goes on into a longer name:
+        /// a name character on the side without a marker (":a" leaves ":ab" alone, and "a$" leaves "ba$"),
+        /// or a longer placeholder the pattern matched (":date" leaves ":date-from" alone under a pattern
+        /// that allows "-" in names). Nor inside a slot already written.
         /// </summary>
         private static string ReplaceOneMarkerText(
             string query,
             Dictionary<string, (int Slot, bool OpenEmpty, bool CloseEmpty)> oneMarkerText,
-            Func<int, string> slot)
+            Func<int, string> slot,
+            StringComparison comparison,
+            char delimiter,
+            List<string> oneMarkerPlaceholders)
         {
+            var byLength = ByLength(oneMarkerPlaceholders, comparison);
             foreach (var text in oneMarkerText)
             {
+                var places = OneMarkerTextPlaces(query, text.Key, text.Value.OpenEmpty, text.Value.CloseEmpty,
+                    comparison, delimiter, byLength);
+                if (places.Count == 0) continue;
                 var replaced = new System.Text.StringBuilder(query.Length);
                 int position = 0;
-                int index;
-                while ((index = query.IndexOf(text.Key, position, StringComparison.OrdinalIgnoreCase)) >= 0)
+                foreach (var (start, end) in places)
                 {
-                    int end = index + text.Key.Length;
-                    bool continued = (text.Value.OpenEmpty && index > 0 && IsNameCharacter(query[index - 1]))
-                        || (text.Value.CloseEmpty && end < query.Length && IsNameCharacter(query[end]));
-                    replaced.Append(query, position, index - position);
-                    replaced.Append(continued ? query.Substring(index, text.Key.Length) : slot(text.Value.Slot));
+                    replaced.Append(query, position, start - position);
+                    replaced.Append(slot(text.Value.Slot));
                     position = end;
                 }
                 replaced.Append(query, position, query.Length - position);
                 query = replaced.ToString();
             }
             return query;
+        }
+
+        /// <summary>The one-marker placeholders by length, as <see cref="OneMarkerTextPlaces"/> looks them up.</summary>
+        private static Dictionary<int, HashSet<string>> ByLength(IEnumerable<string> oneMarkerPlaceholders, StringComparison comparison)
+        {
+            var byLength = new Dictionary<int, HashSet<string>>();
+            foreach (var x in oneMarkerPlaceholders)
+            {
+                if (!byLength.TryGetValue(x.Length, out var ofLength))
+                    byLength[x.Length] = ofLength = new HashSet<string>(
+                        comparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+                ofLength.Add(x);
+            }
+            return byLength;
+        }
+
+        /// <summary>
+        /// The places <see cref="ReplaceOneMarkerText"/> replaces a one-marker placeholder's text, left to right.
+        /// <paramref name="oneMarkerPlaceholders"/> holds the pattern's one-marker placeholders by length
+        /// (<see cref="ByLength"/>): an occurrence that is the start of a longer one (or, with a close marker
+        /// only, the end of one) goes on into it.
+        /// </summary>
+        private static List<(int Start, int End)> OneMarkerTextPlaces(
+            string query,
+            string text,
+            bool openEmpty,
+            bool closeEmpty,
+            StringComparison comparison,
+            char delimiter,
+            Dictionary<int, HashSet<string>> oneMarkerPlaceholders)
+        {
+            var places = new List<(int Start, int End)>();
+            int position = 0, scanned = 0;
+            bool insideSlot = false, digits = IsDigits(text);
+            int index;
+            while ((index = query.IndexOf(text, position, comparison)) >= 0)
+            {
+                int end = index + text.Length;
+                bool continued = (digits && InsideSlotAt(query, delimiter, index, ref scanned, ref insideSlot))
+                    || (openEmpty && index > 0 && IsNameCharacter(query[index - 1]))
+                    || (closeEmpty && end < query.Length && IsNameCharacter(query[end]))
+                    || oneMarkerPlaceholders.Any(x => x.Key > text.Length && (closeEmpty
+                        ? index + x.Key <= query.Length && x.Value.Contains(query.Substring(index, x.Key))
+                        : end - x.Key >= 0 && x.Value.Contains(query.Substring(end - x.Key, x.Key))));
+                if (!continued) places.Add((index, end));
+                position = end;
+            }
+            return places;
         }
 
         /// <summary>A character a regular expression's \w matches: a letter, a decimal digit, a nonspacing mark or a connector such as _.</summary>
@@ -945,12 +1858,12 @@ namespace Com.H.Data.Common
         /// ":name", which keeps "::" casts out); the whole match when it has neither marker, since its
         /// text would be a bare name (a column).
         /// </summary>
-        private static (int Start, int End) PlaceholderSpan(Match m)
+        private static (int Start, int End) PlaceholderSpan(Match m) =>
+            PlaceholderSpan(m, m.Groups["open_marker"], m.Groups["close_marker"], m.Groups["param"]);
+
+        private static (int Start, int End) PlaceholderSpan(Match m, Group open, Group close, Group param)
         {
-            var open = m.Groups["open_marker"];
-            var close = m.Groups["close_marker"];
             if (open.Length == 0 && close.Length == 0) return (m.Index, m.Index + m.Length);
-            var param = m.Groups["param"];
             return (open.Length > 0 ? open.Index : param.Index,
                     close.Length > 0 ? close.Index + close.Length : param.Index + param.Length);
         }
@@ -959,7 +1872,7 @@ namespace Com.H.Data.Common
         /// Replaces each slot that <see cref="ResolveMarkers"/> wrote with the text <paramref name="textOfSlot"/>
         /// returns for its index, called once per slot, left to right.
         /// </summary>
-        private static string FillSlots(string slotText, char slotDelimiter, Func<int, string> textOfSlot)
+        internal static string FillSlots(string slotText, char slotDelimiter, Func<int, string> textOfSlot)
         {
             var result = new System.Text.StringBuilder(slotText.Length);
             int position = 0;

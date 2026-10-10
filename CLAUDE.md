@@ -60,7 +60,7 @@ SQLite tests run everywhere. The SQL Server tests (`Tests/SqlServerTests.cs`) ne
 (`(localdb)\MSSQLLocalDB`), and the ODBC tests need the Microsoft Access driver
 (`Tests/sample.accdb`) and ODBC Driver 17 for SQL Server. A test whose database or driver is
 missing passes without running anything, so compare the test count with the last run's, not
-only the colour. At 10.1.0.11: Tests 192, Tests.Net481 179, with LocalDB and both drivers
+only the colour. At 10.1.0.12: Tests 279, Tests.Net481 266, with LocalDB and both drivers
 present.
 
 DBToRestAPI (github.com/H7O/DBToRestAPI) is this package's main consumer. Before releasing a
