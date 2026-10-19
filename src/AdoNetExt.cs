@@ -803,14 +803,26 @@ namespace Com.H.Data.Common
             var comparer = caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
             var comparison = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
-            // The first private-use character the text doesn't contain, found in one pass.
-            var present = new bool['\uF8FF' - '\uE000' + 1];
+            // The first private-use character the text doesn't contain, found in one pass: U+E000 when it has
+            // none, as a query almost never does.
+            var delimiter = '\uE000';
+            bool hasPrivateUse = false;
             foreach (var c in query)
-                if (c >= '\uE000' && c <= '\uF8FF') present[c - '\uE000'] = true;
-            int free = Array.IndexOf(present, false);
-            if (free < 0)
-                throw new ArgumentException("The text contains every Unicode private-use character (U+E000 to U+F8FF), so none is left to mark its placeholders with.");
-            var delimiter = (char)('\uE000' + free);
+                if (c >= '\uE000' && c <= '\uF8FF')
+                {
+                    hasPrivateUse = true;
+                    break;
+                }
+            if (hasPrivateUse)
+            {
+                var present = new bool['\uF8FF' - '\uE000' + 1];
+                foreach (var c in query)
+                    if (c >= '\uE000' && c <= '\uF8FF') present[c - '\uE000'] = true;
+                int free = Array.IndexOf(present, false);
+                if (free < 0)
+                    throw new ArgumentException("The text contains every Unicode private-use character (U+E000 to U+F8FF), so none is left to mark its placeholders with.");
+                delimiter = (char)('\uE000' + free);
+            }
             string Slot(int index) => delimiter + index.ToString(CultureInfo.InvariantCulture) + delimiter;
 
             var slots = new List<(string Name, int Source, object? Value)>();
@@ -863,10 +875,38 @@ namespace Com.H.Data.Common
             // Placeholder texts known to be gone from the query (every change turns text into a slot).
             var absentTexts = new HashSet<string>(comparer);
             var originalQuery = query;
+
+            // Group g takes the placeholders that a group read before it filled from a source listed
+            // before g's source for the name, where its pattern matched them or by text where its own
+            // pass still reaches them (see Claimants and PassReaches), under
+            // the name it reads there; of several such groups, the one whose source is listed last.
+            void TakeClaims(int g, SourceGroup group, int source)
+            {
+                foreach (var claim in claims)
+                {
+                    foreach (var (claimant, laterName) in claim.Claimants)
+                    {
+                        if (claimant != g) continue;
+                        var supplier = group.SupplierOf[laterName];
+                        if (supplier <= claim.Supplier) continue;
+                        slots[claim.Slot] = (laterName, source, group.Model[laterName]);
+                        claim.Supplier = supplier;
+                    }
+                }
+            }
+
             for (int g = 0; g < groups.Count; g++)
             {
                 var group = groups[g];
                 int source = g + 1;
+                var matches = MatchesOutsideSlots(query, group.Pattern!, delimiter, out bool skippedAMatch);
+                // A group whose pattern matches nothing in the query as it stands, and skips no match, has
+                // nothing to bind or replace: it only takes what a group read before it left to it.
+                if (matches.Count == 0 && !skippedAMatch)
+                {
+                    TakeClaims(g, group, source);
+                    continue;
+                }
                 var unresolvedNames = new HashSet<string>(comparer);
                 var valueOfName = new Dictionary<string, object?>(comparer);
                 // The slot of each placeholder name this set has resolved, and of each placeholder a set read after
@@ -1227,7 +1267,6 @@ namespace Com.H.Data.Common
                     }
                 }
 
-                var matches = MatchesOutsideSlots(query, group.Pattern!, delimiter, out bool skippedAMatch);
                 // Each match's slot, and the slot its text gets where this group's text passes replace it; they
                 // differ when a set read later takes this match at its place only (see Claimants).
                 var slotOfMatch = new int[matches.Count];
@@ -1346,21 +1385,7 @@ namespace Com.H.Data.Common
                     }
                 }
 
-                // This group takes the placeholders that a group read before it filled from a source listed
-                // before this group's source for the name, where its pattern matched them or by text where its own
-                // pass still reaches them (see Claimants and PassReaches), under
-                // the name it reads there; of several such groups, the one whose source is listed last.
-                foreach (var claim in claims)
-                {
-                    foreach (var (claimant, laterName) in claim.Claimants)
-                    {
-                        if (claimant != g) continue;
-                        var supplier = group.SupplierOf[laterName];
-                        if (supplier <= claim.Supplier) continue;
-                        slots[claim.Slot] = (laterName, source, group.Model[laterName]);
-                        claim.Supplier = supplier;
-                    }
-                }
+                TakeClaims(g, group, source);
 
                 if (unresolvedNames.Count > 0)
                     unresolved.Add((group.Pattern!, source, unresolvedNames, unresolvedTexts,
