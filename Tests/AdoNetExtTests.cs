@@ -2569,6 +2569,91 @@ public class AdoNetExtTests : IDisposable
 
     #endregion
 
+    #region JSON numbers
+
+    [Fact]
+    public async Task AJsonIntegerFrom2To53_FindsItsOwnRow()
+    {
+        // As a double, 9007199254740993 was 9007199254740992, and a lookup by either id found both rows.
+        using (var create = _connection.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE BigIds (id INTEGER PRIMARY KEY, name TEXT); "
+                + "INSERT INTO BigIds VALUES (9007199254740992, 'before'), (9007199254740993, 'wanted');";
+            create.ExecuteNonQuery();
+        }
+
+        foreach (var (id, name) in new[] { ("9007199254740993", "wanted"), ("9007199254740992", "before") })
+            foreach (var body in new object[] { JsonDocument.Parse($$"""{"id": {{id}}}""").RootElement, $$"""{"id": {{id}}}""" })
+            {
+                using var command = _connection.CreateCommand();
+                await using var result = await command.ExecuteQueryAsync("SELECT name, typeof({{id}}) AS type FROM BigIds WHERE id = {{id}}", body);
+                var rows = new List<dynamic>();
+                await foreach (var row in result) rows.Add(row);
+
+                var only = Assert.Single(rows);
+                Assert.Equal(name, (string)only.name);
+                Assert.Equal("integer", (string)only.type);
+            }
+    }
+
+    [Fact]
+    public async Task AnOrdinaryJsonNumber_IsStillAReal()
+    {
+        using var command = _connection.CreateCommand();
+        await using var result = await command.ExecuteQueryAsync("SELECT typeof({{a}}) AS ta, typeof({{b}}) AS tb, {{a}} / 2 AS half",
+            JsonDocument.Parse("""{"a": 5, "b": 9007199254740991}""").RootElement);
+        var rows = new List<dynamic>();
+        await foreach (var row in result) rows.Add(row);
+
+        var only = Assert.Single(rows);
+        Assert.Equal("real", (string)only.ta);
+        Assert.Equal("real", (string)only.tb);
+        Assert.Equal(2.5, (double)only.half);
+    }
+
+    [Theory]
+    [InlineData("9007199254740993", typeof(long))]
+    [InlineData("-9007199254740993", typeof(long))]
+    [InlineData("9223372036854775807", typeof(long))]
+    [InlineData("9007199254740992", typeof(long))]       // 2^53: a double can't tell it from 2^53 + 1
+    [InlineData("-9007199254740992", typeof(long))]
+    [InlineData("9007199254740991", typeof(double))]     // below 2^53, each integer is a double of its own
+    [InlineData("-9007199254740991", typeof(double))]
+    [InlineData("5", typeof(double))]
+    [InlineData("2.5", typeof(double))]
+    [InlineData("9007199254740993.0", typeof(double))]   // not written as an integer
+    [InlineData("9223372036854775808", typeof(double))]  // past a long
+    public void GetDataModelParameters_AJsonNumber_IsADouble_AndAnIntegerFrom2To53_ALong(string number, Type type)
+    {
+        foreach (var body in new object[] { JsonDocument.Parse($$"""{"n": {{number}}}""").RootElement, $$"""{"n": {{number}}}""" })
+            Assert.IsType(type, body.GetDataModelParameters()!["n"]);
+    }
+
+    [Fact]
+    public void GetDataModelParameters_AnIntegerFrom2To53_KeepsEveryDigit()
+    {
+        // As a double it was 9007199254740992.
+        Assert.Equal(9007199254740993L, JsonDocument.Parse("""{"n": 9007199254740993}""").RootElement.GetDataModelParameters()!["n"]);
+    }
+
+    [Fact]
+    public void Fill_WritesAnIntegerFrom2To53_WithEveryDigit()
+    {
+        Assert.Equal("9007199254740993 5", "{{big}} {{small}}".Fill(
+            MakeQueryParams(JsonDocument.Parse("""{"big": 9007199254740993, "small": 5}""").RootElement)));
+    }
+
+    [Fact]
+    public void BuildPositionalParameters_AnIntegerFrom2To53_IsALong()
+    {
+        var (_, parameters) = AdoNetExt.BuildPositionalParameters("SELECT {{n}}",
+            MakeQueryParams(JsonDocument.Parse("""{"n": 9007199254740993}""").RootElement));
+
+        Assert.Equal(9007199254740993L, Assert.IsType<long>(Assert.Single(parameters).Value));
+    }
+
+    #endregion
+
     #region ExecuteCommand Connection Handling
 
     [Fact]

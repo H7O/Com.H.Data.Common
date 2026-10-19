@@ -1,6 +1,6 @@
 {
   "$comment": "Baseline for tools/check-shared-drift.ps1. Com.H.Data.Common keeps internal copies of these Com.H classes so it can ship with no NuGet dependencies. Hashes record the last state in which both copies were verified to agree. Regenerate with: pwsh tools/check-shared-drift.ps1 -Approve",
-  "approvedOn": "2026-10-10",
+  "approvedOn": "2026-10-19",
   "sharedClasses": [
     {
       "name": "DataMapper",
@@ -17,10 +17,10 @@
       "comH": "src/Data/DataExtensions.cs",
       "dataCommon": "src/DataExtensions.cs",
       "note": "Only GetDataModelParameters is shared, and its body is identical. Com.H additionally has QueryParams, ReplaceQueryParameterMarkers and a two-parameter binary-compat overload; Com.H.Data.Common additionally has Fill and ReduceToUnique, which are bound to DbQueryParams and cannot move. File-level difference here is expected -- what matters is that GetDataModelParameters changes on one side get mirrored.",
-      "comHCodeHash": "1f35cb32bcb628af1f1c3360358e3d9d9871f85ae7caaf304fbbe82a5a2ca491",
-      "comHDocHash": "a3cd3a083ca1d1a4c4ecf266b86cc2c4d8e6687c76d2e6946e9154bd04187a9c",
-      "dataCommonCodeHash": "15951b2e1a063c09222e1c6cde34897782e9207829ff1d6ad3a86de95c104b9a",
-      "dataCommonDocHash": "cf2003d0aba4404a3e674be7f336ddc51f36dee87deabac0c14672d33b07b830"
+      "comHCodeHash": "b59c2fc004e52d40490b5fee3930d0333e02a68f152442a947c1f213a618f607",
+      "comHDocHash": "5e8ed8dd7c33be62ca207577ac0c3991dbe167cb870cddc880ebe13f1cc4f409",
+      "dataCommonCodeHash": "0bd82a213531b1ac65af5e45a7e1e7affb1d66d99dfe0afe9b01c5f4a69fc4d6",
+      "dataCommonDocHash": "67ba4096d1f89c2b8c9cd519b0a2d0cc62aab94406337445d7b8b296ff85ca44"
     },
     {
       "name": "DynamicPropertyInfo",

@@ -1,5 +1,6 @@
 using Com.H.Data.Common;
 using Microsoft.Data.SqlClient;
+using System.Data.Common;
 using System.Data.Odbc;
 using System.Text.Json;
 
@@ -21,6 +22,23 @@ internal static class LocalDb
             return connection;
         }
         catch (SqlException)
+        {
+            connection.Dispose();
+            return null;
+        }
+    }
+
+    /// <summary>LocalDB through ODBC Driver 17 for SQL Server, or null when either is missing.</summary>
+    public static OdbcConnection? TryOpenOdbc()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var connection = new OdbcConnection(@"Driver={ODBC Driver 17 for SQL Server};Server=(localdb)\MSSQLLocalDB;Trusted_Connection=yes;");
+        try
+        {
+            connection.Open();
+            return connection;
+        }
+        catch (Exception ex) when (ex is OdbcException or InvalidOperationException)
         {
             connection.Dispose();
             return null;
@@ -180,22 +198,7 @@ public class SqlServerErrorAfterRowsTests : IDisposable
 /// </summary>
 public class OdbcSqlServerErrorAfterRowsTests : IDisposable
 {
-    private readonly OdbcConnection? _connection;
-
-    public OdbcSqlServerErrorAfterRowsTests()
-    {
-        if (!OperatingSystem.IsWindows()) return;
-        var connection = new OdbcConnection(@"Driver={ODBC Driver 17 for SQL Server};Server=(localdb)\MSSQLLocalDB;Trusted_Connection=yes;");
-        try
-        {
-            connection.Open();
-            _connection = connection;
-        }
-        catch (Exception ex) when (ex is OdbcException or InvalidOperationException)
-        {
-            connection.Dispose();
-        }
-    }
+    private readonly OdbcConnection? _connection = LocalDb.TryOpenOdbc();
 
     public void Dispose() => _connection?.Dispose();
 
@@ -248,5 +251,65 @@ public class OdbcSqlServerErrorAfterRowsTests : IDisposable
         Assert.True(result.Reader!.IsClosed);
         using var next = _connection!.ExecuteQuery("SELECT 3 AS n");
         Assert.Equal(3, (int)next.First().n);
+    }
+}
+
+/// <summary>
+/// JSON numbers on SQL Server: a float, as before, except an integer from 2^53 on, which is a bigint.
+/// As a float, 9007199254740993 was 9007199254740992, and a lookup by either id found both rows.
+/// </summary>
+public class SqlServerJsonNumberTests : IDisposable
+{
+    private readonly SqlConnection? _connection = LocalDb.TryOpen();
+    private readonly OdbcConnection? _odbc = LocalDb.TryOpenOdbc();
+
+    public void Dispose()
+    {
+        _connection?.Dispose();
+        _odbc?.Dispose();
+    }
+
+    private const string Lookup =
+        "DECLARE @t TABLE (id bigint PRIMARY KEY, name nvarchar(20)); "
+        + "INSERT INTO @t VALUES (9007199254740992, N'before'), (9007199254740993, N'wanted'); "
+        + "SELECT name, CAST(SQL_VARIANT_PROPERTY(CAST({{id}} AS sql_variant), 'BaseType') AS nvarchar(30)) AS type "
+        + "FROM @t WHERE id = {{id}};";
+
+    private static string BaseType(DbConnection connection, string body)
+    {
+        using var result = connection.ExecuteQuery(
+            "SELECT CAST(SQL_VARIANT_PROPERTY(CAST({{n}} AS sql_variant), 'BaseType') AS nvarchar(30)) AS type",
+            JsonDocument.Parse(body).RootElement);
+        return (string)Assert.Single(result.ToList()).type;
+    }
+
+    [Fact]
+    public void AnIntegerFrom2To53_IsABigint_AndFindsItsOwnRow()
+    {
+        // ODBC binds it by position, once per placeholder.
+        foreach (var connection in new DbConnection?[] { _connection, _odbc })
+        {
+            if (connection is null) continue;
+
+            foreach (var (id, name) in new[] { ("9007199254740993", "wanted"), ("9007199254740992", "before") })
+            {
+                using var result = connection.ExecuteQuery(Lookup, JsonDocument.Parse($$"""{"id": {{id}}}""").RootElement);
+                var row = Assert.Single(result.ToList());
+
+                Assert.Equal(name, (string)row.name);
+                Assert.Equal("bigint", (string)row.type);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"n": 5}""")]
+    [InlineData("""{"n": 2.5}""")]
+    [InlineData("""{"n": 9007199254740991}""")]
+    public void AnOrdinaryJsonNumber_IsStillAFloat(string body)
+    {
+        if (_connection is null) return;
+
+        Assert.Equal("float", BaseType(_connection, body));
     }
 }

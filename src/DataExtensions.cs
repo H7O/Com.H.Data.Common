@@ -108,7 +108,7 @@ namespace Com.H.Data.Common
                                 case JsonValueKind.True:
                                     result[x.Name] = true; break;
                                 case JsonValueKind.Number:
-                                    result[x.Name] = x.Value.GetDouble(); break;
+                                    result[x.Name] = JsonNumber(x.Value); break;
                                 case JsonValueKind.String:
                                     result[x.Name] = x.Value.GetString()!; break;
                                 case JsonValueKind.Null:
@@ -147,7 +147,7 @@ namespace Com.H.Data.Common
                                     case JsonValueKind.True:
                                         result[x.Name] = true; break;
                                     case JsonValueKind.Number:
-                                        result[x.Name] = x.Value.GetDouble(); break;
+                                        result[x.Name] = JsonNumber(x.Value); break;
                                     case JsonValueKind.String:
                                         result[x.Name] = x.Value.GetString()!; break;
                                     case JsonValueKind.Null:
@@ -176,6 +176,14 @@ namespace Com.H.Data.Common
                 }
             }
             return result;
+
+            // A JSON number is a double, except an integer from 2^53 (9007199254740992) on, of either sign:
+            // that is a long, while it fits one. From 2^53 on, a double can't tell neighbouring integers
+            // apart, so 9007199254740993 would be 9007199254740992, and a query by either id would find both.
+            static object JsonNumber(JsonElement number) =>
+                number.TryGetInt64(out var integer) && (integer >= 9007199254740992 || integer <= -9007199254740992)
+                    ? (object)integer
+                    : number.GetDouble();
         }
 
         /// <summary>
