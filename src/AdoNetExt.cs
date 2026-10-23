@@ -550,6 +550,8 @@ namespace Com.H.Data.Common
             {
                 if (reader?.HasRows == true)
                 {
+                    // Read from the first row: every row of a result set has the same columns.
+                    RowShape? shape = null;
                     bool cont = true;
                     while (cont)
                     {
@@ -557,12 +559,9 @@ namespace Com.H.Data.Common
                         cToken.ThrowIfCancellationRequested();
                         if (!cont) break;
 
-                        ExpandoObject result = new();
+                        shape ??= RowShape.Of(reader, hasDataTypes ? dataTypeDict : null);
 
-                        if (reader.FieldCount == 1
-                            // check if there is no column name
-                            && string.IsNullOrEmpty(reader.GetName(0)))
-
+                        if (shape.IsBareValue)
                         {
                             // A single column with no name (SQL Server's COUNT(*) or
                             // SCOPE_IDENTITY() without an alias) is returned as its bare value.
@@ -576,44 +575,24 @@ namespace Com.H.Data.Common
                             continue;
                         }
 
-
-                        foreach (var item in Enumerable.Range(0, reader.FieldCount)
-                                .Select(x => new { Name = reader.GetName(x), Value = reader.GetValue(x) }))
+                        var values = new object?[shape.Ordinals.Length];
+                        for (int i = 0; i < values.Length; i++)
                         {
-                            // ensure null of the correct type is returned
-                            if (item.Value is DBNull)
-                            {
-                                result.TryAdd(item.Name, null);
-                            }
-                            else
-                            {
-                                if (hasDataTypes
-                                    && dataTypeDict != null
-                                    && dataTypeDict.TryGetValue(item.Name, out dynamic? value)
-                                    && !string.IsNullOrEmpty(item.Value as string)
-                                    )
-                                {
-
-                                    switch (value.Type)
+                            var value = reader.GetValue(shape.Ordinals[i]);
+                            // A JSON or XML column ({type{json{name}}}) holding text is parsed.
+                            values[i] = value is DBNull ? null
+                                : shape.Types[i] is { } type && value is string { Length: > 0 } text
+                                    ? type switch
                                     {
-                                        case "json":
-                                            result.TryAdd(item.Name, (object)(item.Value as string)!.ParseJson());
-                                            break;
-                                        case "xml":
-                                            result.TryAdd(item.Name, (object)(item.Value as string)!.ParseXml());
-                                            break;
-                                        default:
-                                            result.TryAdd(item.Name, item.Value);
-                                            break;
+                                        "json" => (object)text.ParseJson(),
+                                        "xml" => (object)text.ParseXml(),
+                                        _ => value
                                     }
-                                }
-                                else
-                                    result.TryAdd(item.Name, item.Value);
-                            }
+                                    : value;
                         }
 
                         atRow = true;
-                        yield return result;
+                        yield return new DbQueryRow(shape.Columns, values);
                         atRow = false;
                     }
                 }
@@ -689,6 +668,51 @@ namespace Com.H.Data.Common
                 catch
                 {
                 }
+            }
+        }
+
+        /// <summary>
+        /// What a result set's rows hold, read once from its first row: the column names their
+        /// <see cref="DbQueryRow"/>s share, the reader column each one is read from, and the
+        /// type (<c>json</c>, <c>xml</c>) a <c>{type{json{name}}}</c> marker gave it.
+        /// </summary>
+        private sealed class RowShape
+        {
+            private RowShape(bool isBareValue, DbQueryRow.Columns columns, int[] ordinals, string?[] types)
+            {
+                IsBareValue = isBareValue;
+                Columns = columns;
+                Ordinals = ordinals;
+                Types = types;
+            }
+
+            /// <summary>One column without a name: each row is its value alone.</summary>
+            public bool IsBareValue { get; }
+            public DbQueryRow.Columns Columns { get; }
+            public int[] Ordinals { get; }
+            public string?[] Types { get; }
+
+            public static RowShape Of(DbDataReader reader, Dictionary<string, dynamic>? dataTypes)
+            {
+                if (reader.FieldCount == 1 && string.IsNullOrEmpty(reader.GetName(0)))
+                    return new RowShape(true, DbQueryRow.Columns.Empty, [], []);
+
+                // A name used twice keeps its first column, as an ExpandoObject's TryAdd did.
+                var names = new List<string>(reader.FieldCount);
+                var ordinals = new List<int>(reader.FieldCount);
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                for (int i = 0; i < reader.FieldCount; i++)
+                {
+                    var name = reader.GetName(i);
+                    if (!seen.Add(name))
+                        continue;
+                    names.Add(name);
+                    ordinals.Add(i);
+                }
+                var types = names
+                    .Select(name => dataTypes != null && dataTypes.TryGetValue(name, out var marker) ? (string?)marker.Type : null)
+                    .ToArray();
+                return new RowShape(false, new DbQueryRow.Columns(names.ToArray()), ordinals.ToArray(), types);
             }
         }
 

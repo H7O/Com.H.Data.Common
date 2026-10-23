@@ -60,8 +60,17 @@ SQLite tests run everywhere. The SQL Server tests (`Tests/SqlServerTests.cs`) ne
 (`(localdb)\MSSQLLocalDB`), and the ODBC tests need the Microsoft Access driver
 (`Tests/sample.accdb`) and ODBC Driver 17 for SQL Server. A test whose database or driver is
 missing passes without running anything, so compare the test count with the last run's, not
-only the colour. At 10.1.0.14: Tests 299, Tests.Net481 282, with LocalDB and both drivers
+only the colour. At 10.1.0.15: Tests 310, Tests.Net481 293, with LocalDB and both drivers
 present.
+
+## Rows
+
+A query's dynamic rows are `DbQueryRow`s (`src/DbQueryRow.cs`), built in
+`CreateAsyncEnumerableFromReader` from a `RowShape` read once per result set. They replaced
+ExpandoObject in 10.1.0.15, and must keep behaving as one: the same columns in the same order
+(the first of a repeated name), the same `dynamic` and `IDictionary` behaviour, and the same JSON
+byte for byte under any options and encoder. `Tests/DbQueryRowTests.cs` (also run on .NET
+Framework) compares each of those with an ExpandoObject.
 
 DBToRestAPI (github.com/H7O/DBToRestAPI) is this package's main consumer. Before releasing a
 change to how queries are built or read, pack it with a `-localN` version into a local feed and

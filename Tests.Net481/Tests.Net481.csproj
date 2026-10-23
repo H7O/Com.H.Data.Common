@@ -57,6 +57,7 @@
   <ItemGroup>
     <Compile Include="..\Tests\AdoNetExtTests.cs" Link="AdoNetExtTests.cs" />
     <Compile Include="..\Tests\FillExtensionTests.cs" Link="FillExtensionTests.cs" />
+    <Compile Include="..\Tests\DbQueryRowTests.cs" Link="DbQueryRowTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

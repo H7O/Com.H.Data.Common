@@ -116,6 +116,8 @@ foreach (var item in result)
 For example, you can use it in a foreach loop, or pass it to LINQ methods like Where, Select, etc.<br/>
 The asynchronous version returns `DbAsyncQueryResult<T>` which implements `IAsyncEnumerable<T>` and `IAsyncDisposable`.
 
+> **Note**: Each dynamic row is a `DbQueryRow`. Read a column as a member (`item.name`), or through `IDictionary<string, object?>` (`row["first name"]`) when its name isn't a C# identifier. Names are case-sensitive, and a database `NULL` is `null`. The rows of one result share their column names, so a row costs little more than its values. System.Text.Json writes a row as a JSON object of its columns.
+
 
 ## Sample 2
 This sample demonstrates how to pass parameters to your SQL query
