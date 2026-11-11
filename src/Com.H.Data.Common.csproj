@@ -1,15 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;net8.0;net9.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AssemblyName>Com.H.Data.Common</AssemblyName>
     <RootNamespace>Com.H.Data.Common</RootNamespace>
-    <Version>10.1.0.15</Version>
+    <Version>11.0.0</Version>
     <Authors>Hussein Al Bayati</Authors>
-    <Description>Run SQL on any ADO.NET connection and get the rows back as strongly typed objects (ExecuteQuery&lt;T&gt;, ExecuteQueryAsync&lt;T&gt;) or as dynamic objects (ExecuteQuery, ExecuteQueryAsync), streamed as IEnumerable&lt;T&gt; or IAsyncEnumerable&lt;T&gt;. The methods extend DbConnection and DbCommand; ExecuteCommand and ExecuteCommandAsync run statements that return no rows. An error the database raises after the rows (SQL Server THROW after a SELECT) is thrown when the rows are read to their end. Parameters are written as {{name}} in the SQL and always sent as real database parameters, never concatenated into it. Their names can hold any characters, so a JSON body's keys work as they are ({{first name}}, {{e-mail}}); names are matched ignoring case, and a name the parameters object lacks, or whose value is null, is sent as NULL. Their values come from an anonymous object, a dictionary, a JsonElement or JSON text, and the delimiters can be changed. Several parameter sources, each with its own delimiters, can fill one query, a later source taking precedence. Typed results map columns to properties by name, or by [DataMember] or [JsonPropertyName]. JSON and XML columns can be returned as nested objects. Works with SQL Server, PostgreSQL, MySQL and MariaDB, SQLite, Oracle, DB2 and any other ADO.NET provider; on ODBC and OleDb the named parameters become positional ? parameters automatically. No package dependencies on .NET 8 and later. Targets .NET 10, 9 and 8, and .NET Standard 2.0, which includes .NET Framework 4.6.1 and later.</Description>
+    <Description>Run SQL on any ADO.NET connection and get the rows back as strongly typed objects (ExecuteQuery&lt;T&gt;, ExecuteQueryAsync&lt;T&gt;) or as dynamic objects (ExecuteQuery, ExecuteQueryAsync), streamed as IEnumerable&lt;T&gt; or IAsyncEnumerable&lt;T&gt;. The methods extend DbConnection and DbCommand; ExecuteCommand and ExecuteCommandAsync run statements that return no rows. An error the database raises after the rows (SQL Server THROW after a SELECT) is thrown when the rows are read to their end. Parameters are written as {{name}} in the SQL and always sent as real database parameters, never concatenated into it. Their names can hold any characters, so a JSON body's keys work as they are ({{first name}}, {{e-mail}}); names are matched ignoring case, and a name the parameters object lacks, or whose value is null, is sent as NULL. Their values come from an anonymous object, a dictionary, a JsonElement or JSON text, and the delimiters can be changed. Several parameter sources, each with its own delimiters, can fill one query, a later source taking precedence. Typed results map columns to properties by name, or by [DataMember] or [JsonPropertyName]. JSON and XML columns can be returned as nested objects. Works with SQL Server, PostgreSQL, MySQL and MariaDB, SQLite, Oracle, DB2 and any other ADO.NET provider; on ODBC and OleDb the named parameters become positional ? parameters automatically. No package dependencies on .NET 8 and later. Targets .NET 11, 10, 9 and 8, and .NET Standard 2.0, which includes .NET Framework 4.6.1 and later.</Description>
     <Copyright>Hussein Al Bayati</Copyright>
     <PackageProjectUrl>https://github.com/H7O/Com.H.Data.Common</PackageProjectUrl>
     <PackageIcon>128x128.jpg</PackageIcon>
@@ -17,7 +17,7 @@
     <RepositoryUrl>https://github.com/H7O/Com.H.Data.Common</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>ado.net;sql;micro-orm;typed;dynamic;async;iasyncenumerable;parameterized-query;sql-server;postgresql;mysql;sqlite;oracle;db2;odbc;oledb;netstandard2.0</PackageTags>
-    <PackageReleaseNotes>A query's dynamic rows cost less to build and to write as JSON. Each row is now a DbQueryRow, where it was an ExpandoObject. The rows of one result share their column names, so a row takes two allocations, where an ExpandoObject grew one column at a time. A row reads as before: as dynamic (row.name), or as IDictionary&lt;string, object?&gt; with case-sensitive names, and it raises PropertyChanged when a column changes. A name used twice still keeps its first column, and a JSON or XML column ({type{json{name}}}) is still parsed into ExpandoObjects. System.Text.Json writes a row byte for byte as it wrote the ExpandoObject, whatever the options, encoding each column name once per result, and reads one with JsonElement values. Code that tests a row's type (row is ExpandoObject) should test for DbQueryRow or IDictionary&lt;string, object?&gt; instead. In DBToRestAPI's benchmark, on one CPU, a response of 1,000 rows took 41% less CPU, and one of 100 rows 22% less; building 1,000 rows allocates 58% less memory.</PackageReleaseNotes>
+    <PackageReleaseNotes>Adds a net11.0 build, for .NET 11. The netstandard2.0, net8.0, net9.0 and net10.0 builds stay, so nothing changes for a project on an earlier .NET. The major version is 11 because it follows the .NET generation, as 10.0.0 did for .NET 10: no API was added, changed or removed since 10.1.0.15, and code that builds against 10.1.0.15 builds against 11.0.0 as it is. On .NET Standard 2.0 only (which is what .NET Framework uses), the System.Text.Json and Microsoft.Bcl.AsyncInterfaces dependencies move from 10.0.13 to 11.0.0. On .NET 8 and later the package still has no dependencies.</PackageReleaseNotes>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -52,16 +52,19 @@
     <Error Text="Com.H.Data.Common must be packed from the Release configuration, but this pack is $(Configuration). Switch the configuration to Release, or run: dotnet pack .\src\Com.H.Data.Common.csproj -c Release" />
   </Target>
 
-  <!-- Source Link for GitHub -->
+  <!-- Source Link for GitHub. Held on the 10.0.x line while this project still builds net8.0 and
+       net9.0: 11.0.100 depends on System.IO.Hashing 11.0.0, which supports net10.0 and later
+       only and warns on every build of the two older targets. It is a build-time tool
+       (PrivateAssets), so its version never reaches a consumer. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.402" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.404" PrivateAssets="All" />
   </ItemGroup>
 
   <!-- Polyfill packages for netstandard2.0 (IAsyncEnumerable, IAsyncDisposable,
        EnumeratorCancellationAttribute, System.Text.Json, dynamic runtime binder) -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.13" />
-    <PackageReference Include="System.Text.Json" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="11.0.0" />
+    <PackageReference Include="System.Text.Json" Version="11.0.0" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
   </ItemGroup>
 

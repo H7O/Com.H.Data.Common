@@ -2,14 +2,19 @@
 
 ## Releasing
 
-1. Bump `<Version>` in `src/Com.H.Data.Common.csproj` (four parts: `10.1.0.N`) and replace
-   `<PackageReleaseNotes>` with this version's changes only.
+1. Bump `<Version>` in `src/Com.H.Data.Common.csproj` (four parts: `11.0.0.N`; 11.0.0 itself was
+   the first, and the last of the previous line was 10.1.0.15) and replace
+   `<PackageReleaseNotes>` with this version's changes only. The major version follows the .NET
+   generation: it became 11 when the net11.0 build was added.
 2. Keep `src/nuget.md` in step with `README.md`. It is the README with two differences: a line
    linking to the GitHub page sits just before `## Supported runtimes`, and the `## Installation`
    section is left out (NuGet is where the reader already is). Regenerate it after every README
    change.
 3. Update the direct package references to the latest stable versions, then audit with
-   `dotnet list package --vulnerable --include-transitive`.
+   `dotnet list package --vulnerable --include-transitive`. Two stay on the 10.0.x line on
+   purpose, each with a comment where it is referenced: `Microsoft.SourceLink.GitHub` in `src`
+   (11.0.100 makes the net8.0 and net9.0 builds warn) and `Microsoft.Data.Sqlite` in
+   `Tests.Net481` (11.0.0 has no build .NET Framework can use).
 4. Run both test projects (below). If you touched one of the classes listed in
    `tools/shared-classes.json`, run `pwsh tools/check-shared-drift.ps1` (see `tools/README.md`).
 5. Leave the changes uncommitted until the owner has reviewed the diff. Commit messages carry no
@@ -52,7 +57,7 @@ and `OK`), and check that the `commit` in the `.nuspec`'s `<repository>` element
 ## Tests
 
 ```powershell
-dotnet test Tests            # .NET 10
+dotnet test Tests            # .NET 10 and .NET 11, one run each
 dotnet test Tests.Net481     # .NET Framework 4.8.1; compiles Tests\AdoNetExtTests.cs and FillExtensionTests.cs
 ```
 
@@ -60,8 +65,8 @@ SQLite tests run everywhere. The SQL Server tests (`Tests/SqlServerTests.cs`) ne
 (`(localdb)\MSSQLLocalDB`), and the ODBC tests need the Microsoft Access driver
 (`Tests/sample.accdb`) and ODBC Driver 17 for SQL Server. A test whose database or driver is
 missing passes without running anything, so compare the test count with the last run's, not
-only the colour. At 10.1.0.15: Tests 310, Tests.Net481 293, with LocalDB and both drivers
-present.
+only the colour. At 11.0.0: Tests 310 on each of .NET 10 and .NET 11, Tests.Net481 293, with
+LocalDB and both drivers present.
 
 ## Rows
 
